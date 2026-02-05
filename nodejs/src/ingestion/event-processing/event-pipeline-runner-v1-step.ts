@@ -1,6 +1,5 @@
 import { Message } from 'node-rdkafka'
 
-import { HogTransformerService } from '../../cdp/hog-transformations/hog-transformer.service'
 import { KafkaProducerWrapper } from '../../kafka/producer'
 import { EventHeaders, IncomingEventWithTeam } from '../../types'
 import { TeamManager } from '../../utils/team-manager'
@@ -32,7 +31,6 @@ export function createEventPipelineRunnerV1Step(
     kafkaProducer: KafkaProducerWrapper,
     teamManager: TeamManager,
     groupTypeManager: GroupTypeManager,
-    hogTransformer: HogTransformerService,
     personsStore: PersonsStore
 ): ProcessingStep<EventPipelineRunnerInput, EventPipelineRunnerStepResult> {
     return async function eventPipelineRunnerV1Step(
@@ -54,7 +52,6 @@ export function createEventPipelineRunnerV1Step(
             teamManager,
             groupTypeManager,
             event,
-            hogTransformer,
             personsStore,
             groupStoreForBatch,
             inputHeaders
