@@ -4,12 +4,10 @@ import { CODES, Message, TopicPartition, TopicPartitionOffset, features, librdka
 import { instrumentFn } from '~/common/tracing/tracing-utils'
 
 import { buildIntegerMatcher } from '../config/config'
-import { BatchPipelineUnwrapper } from '../ingestion/pipelines/batch-pipeline-unwrapper'
 import {
-    RestrictionPipelineInput,
-    RestrictionPipelineOutput,
-    applyRestrictions,
-    createRestrictionPipeline,
+    SessionReplayPipelineConfig,
+    createSessionReplayPipeline,
+    runSessionReplayPipeline,
 } from '../ingestion/session_replay'
 import { KafkaConsumer } from '../kafka/consumer'
 import { KafkaProducerWrapper } from '../kafka/producer'
@@ -89,11 +87,7 @@ export class SessionRecordingIngester {
     private readonly libVersionMonitor?: LibVersionMonitor
     private readonly fileStorage: SessionBatchFileStorage
     private readonly eventIngestionRestrictionManager: EventIngestionRestrictionManager
-    private readonly restrictionPipeline: BatchPipelineUnwrapper<
-        RestrictionPipelineInput,
-        RestrictionPipelineOutput,
-        { message: Message }
-    >
+    private readonly pipelineConfig: SessionReplayPipelineConfig
     private readonly kafkaMetadataProducer: KafkaProducerWrapper
     private readonly kafkaMessageProducer: KafkaProducerWrapper
     private readonly overflowTopic: string
@@ -248,13 +242,14 @@ export class SessionRecordingIngester {
             sessionFilter,
         })
 
-        this.restrictionPipeline = createRestrictionPipeline({
-            kafkaProducer: this.kafkaMessageProducer,
+        // Store pipeline config for creating fresh pipelines per batch
+        this.pipelineConfig = {
             eventIngestionRestrictionManager: this.eventIngestionRestrictionManager,
             overflowEnabled: !this.consumeOverflow,
             overflowTopic: this.overflowTopic,
+            kafkaProducer: this.kafkaMessageProducer,
             promiseScheduler: this.promiseScheduler,
-        })
+        }
     }
 
     public get service(): PluginServerService {
@@ -295,11 +290,9 @@ export class SessionRecordingIngester {
         SessionRecordingIngesterMetrics.observeKafkaBatchSize(batchSize)
         SessionRecordingIngesterMetrics.observeKafkaBatchSizeKb(batchSizeKb)
 
-        // Apply event ingestion restrictions before parsing
-        const messagesToProcess = await instrumentFn(
-            `recordingingesterv2.handleEachBatch.applyRestrictions`,
-            async () => await applyRestrictions(this.restrictionPipeline, messages)
-        )
+        // Run messages through the pipeline (currently handles restrictions only)
+        const pipeline = createSessionReplayPipeline(this.pipelineConfig)
+        const messagesToProcess = await runSessionReplayPipeline(pipeline, messages)
 
         const processedMessages = await instrumentFn(`recordingingesterv2.handleEachBatch.parseBatch`, async () => {
             const parsedMessages = await this.kafkaParser.parseBatch(messagesToProcess)

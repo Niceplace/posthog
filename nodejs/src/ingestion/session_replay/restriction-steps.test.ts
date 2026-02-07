@@ -3,8 +3,11 @@ import { Message } from 'node-rdkafka'
 import { KafkaProducerWrapper } from '../../kafka/producer'
 import { PromiseScheduler } from '../../utils/promise-scheduler'
 import { createApplyEventRestrictionsStep, createParseHeadersStep } from '../event-preprocessing'
-import { drop, ok, redirect } from '../pipelines/results'
-import { applyRestrictions, createRestrictionPipeline } from './restriction-pipeline'
+import { newBatchPipelineBuilder } from '../pipelines/builders'
+import { createBatch } from '../pipelines/helpers'
+import { PipelineConfig } from '../pipelines/result-handling-pipeline'
+import { drop, isOkResult, ok, redirect } from '../pipelines/results'
+import { RestrictionStepInput, addRestrictionSteps } from './restriction-steps'
 
 jest.mock('../event-preprocessing', () => ({
     createParseHeadersStep: jest.fn(),
@@ -14,7 +17,7 @@ jest.mock('../event-preprocessing', () => ({
 const mockCreateParseHeadersStep = createParseHeadersStep as jest.Mock
 const mockCreateApplyEventRestrictionsStep = createApplyEventRestrictionsStep as jest.Mock
 
-describe('restriction-pipeline', () => {
+describe('restriction-steps', () => {
     let mockKafkaProducer: jest.Mocked<KafkaProducerWrapper>
     let mockRestrictionManager: any
     let promiseScheduler: PromiseScheduler
@@ -60,19 +63,55 @@ describe('restriction-pipeline', () => {
         }
     }
 
-    describe('applyRestrictions', () => {
-        it('passes through messages when no restrictions apply', async () => {
-            const pipeline = createRestrictionPipeline({
-                kafkaProducer: mockKafkaProducer,
-                eventIngestionRestrictionManager: mockRestrictionManager,
-                overflowEnabled: true,
-                overflowTopic: 'overflow-topic',
-                promiseScheduler,
-            })
+    function createPipeline() {
+        const pipelineConfig: PipelineConfig = {
+            kafkaProducer: mockKafkaProducer,
+            dlqTopic: '',
+            promiseScheduler,
+        }
 
+        const initialBuilder = newBatchPipelineBuilder<RestrictionStepInput, { message: Message }>()
+
+        return addRestrictionSteps(initialBuilder, {
+            eventIngestionRestrictionManager: mockRestrictionManager,
+            overflowEnabled: true,
+            overflowTopic: 'overflow-topic',
+        })
+            .messageAware((b) => b)
+            .handleResults(pipelineConfig)
+            .handleSideEffects(promiseScheduler, { await: false })
+            .gather()
+            .build()
+    }
+
+    async function applyRestrictions(messages: Message[]): Promise<Message[]> {
+        if (messages.length === 0) {
+            return []
+        }
+
+        const pipeline = createPipeline()
+        const batch = createBatch(messages.map((message) => ({ message })))
+        pipeline.feed(batch)
+
+        const allResults: Message[] = []
+        let results = await pipeline.next()
+        while (results !== null) {
+            for (const result of results) {
+                if (isOkResult(result.result)) {
+                    allResults.push(result.result.value.message)
+                }
+            }
+            results = await pipeline.next()
+        }
+
+        return allResults
+    }
+
+    describe('addRestrictionSteps', () => {
+        it('passes through messages when no restrictions apply', async () => {
             const messages = [createMessage(0, 1), createMessage(0, 2)]
 
-            const result = await applyRestrictions(pipeline, messages)
+            const result = await applyRestrictions(messages)
 
             expect(result).toHaveLength(2)
             expect(result[0].offset).toBe(1)
@@ -87,17 +126,9 @@ describe('restriction-pipeline', () => {
                 return Promise.resolve(ok(input))
             })
 
-            const pipeline = createRestrictionPipeline({
-                kafkaProducer: mockKafkaProducer,
-                eventIngestionRestrictionManager: mockRestrictionManager,
-                overflowEnabled: true,
-                overflowTopic: 'overflow-topic',
-                promiseScheduler,
-            })
-
             const messages = [createMessage(0, 1), createMessage(0, 2), createMessage(0, 3)]
 
-            const result = await applyRestrictions(pipeline, messages)
+            const result = await applyRestrictions(messages)
 
             expect(result).toHaveLength(2)
             expect(result[0].offset).toBe(1)
@@ -112,17 +143,9 @@ describe('restriction-pipeline', () => {
                 return Promise.resolve(ok(input))
             })
 
-            const pipeline = createRestrictionPipeline({
-                kafkaProducer: mockKafkaProducer,
-                eventIngestionRestrictionManager: mockRestrictionManager,
-                overflowEnabled: true,
-                overflowTopic: 'overflow-topic',
-                promiseScheduler,
-            })
-
             const messages = [createMessage(0, 1), createMessage(0, 2), createMessage(0, 3)]
 
-            const result = await applyRestrictions(pipeline, messages)
+            const result = await applyRestrictions(messages)
 
             // Wait for side effects to complete
             await promiseScheduler.waitForAll()
@@ -140,15 +163,7 @@ describe('restriction-pipeline', () => {
         })
 
         it('returns empty array for empty input', async () => {
-            const pipeline = createRestrictionPipeline({
-                kafkaProducer: mockKafkaProducer,
-                eventIngestionRestrictionManager: mockRestrictionManager,
-                overflowEnabled: true,
-                overflowTopic: 'overflow-topic',
-                promiseScheduler,
-            })
-
-            const result = await applyRestrictions(pipeline, [])
+            const result = await applyRestrictions([])
 
             expect(result).toHaveLength(0)
         })
@@ -162,21 +177,13 @@ describe('restriction-pipeline', () => {
                 return Promise.resolve(ok(input))
             })
 
-            const pipeline = createRestrictionPipeline({
-                kafkaProducer: mockKafkaProducer,
-                eventIngestionRestrictionManager: mockRestrictionManager,
-                overflowEnabled: true,
-                overflowTopic: 'overflow-topic',
-                promiseScheduler,
-            })
-
             // Create 1000 messages
             const messages: Message[] = []
             for (let i = 1; i <= 1000; i++) {
                 messages.push(createMessage(0, i))
             }
 
-            const result = await applyRestrictions(pipeline, messages)
+            const result = await applyRestrictions(messages)
 
             // 100 messages should be dropped (10, 20, 30, ..., 1000)
             // 900 messages should pass through
@@ -194,21 +201,13 @@ describe('restriction-pipeline', () => {
         })
 
         it('processes large batch with all messages passing through', async () => {
-            const pipeline = createRestrictionPipeline({
-                kafkaProducer: mockKafkaProducer,
-                eventIngestionRestrictionManager: mockRestrictionManager,
-                overflowEnabled: true,
-                overflowTopic: 'overflow-topic',
-                promiseScheduler,
-            })
-
             // Create 500 messages
             const messages: Message[] = []
             for (let i = 1; i <= 500; i++) {
                 messages.push(createMessage(0, i))
             }
 
-            const result = await applyRestrictions(pipeline, messages)
+            const result = await applyRestrictions(messages)
 
             expect(result).toHaveLength(500)
 

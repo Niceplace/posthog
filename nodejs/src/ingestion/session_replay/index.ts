@@ -1,7 +1,15 @@
+// Pipeline
 export {
-    applyRestrictions,
-    createRestrictionPipeline,
-    RestrictionPipelineConfig,
-    RestrictionPipelineInput,
-    RestrictionPipelineOutput,
-} from './restriction-pipeline'
+    createSessionReplayPipeline,
+    runSessionReplayPipeline,
+    SessionReplayPipelineConfig,
+    SessionReplayPipelineInput,
+} from './session-replay-pipeline'
+
+// Restriction steps (used internally by session-replay-pipeline)
+export {
+    addRestrictionSteps,
+    RestrictionStepInput,
+    RestrictionStepOutput,
+    RestrictionStepConfig,
+} from './restriction-steps'
