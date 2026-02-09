@@ -273,3 +273,22 @@ ForceNonColumnar.parameters = {
         },
     },
 }
+
+export const QuickFilters: StoryFn<typeof TaxonomicFilter> = (args) => {
+    useMountedLogic(actionsModel)
+
+    return (
+        <div className="w-fit border rounded p-2 bg-surface-primary">
+            <TaxonomicFilter {...args} />
+        </div>
+    )
+}
+QuickFilters.args = {
+    taxonomicFilterLogicKey: 'quick-filters',
+    taxonomicGroupTypes: [
+        TaxonomicFilterGroupType.QuickFilters,
+        TaxonomicFilterGroupType.Events,
+        TaxonomicFilterGroupType.Actions,
+        TaxonomicFilterGroupType.EventProperties,
+    ],
+}

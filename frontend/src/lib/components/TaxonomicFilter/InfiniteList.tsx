@@ -6,7 +6,7 @@ import { BindLogic, useActions, useValues } from 'kea'
 import { CSSProperties, useEffect, useState } from 'react'
 import { List, useListRef } from 'react-window'
 
-import { IconArchive, IconCheck, IconPlus } from '@posthog/icons'
+import { IconArchive, IconCheck, IconPlus, IconSearch } from '@posthog/icons'
 import { LemonTag } from '@posthog/lemon-ui'
 
 import { AutoSizer } from 'lib/components/AutoSizer'
@@ -474,16 +474,27 @@ export function InfiniteList({ popupAnchorElement }: InfiniteListProps): JSX.Ele
         <div className={clsx('taxonomic-infinite-list', showEmptyState && 'empty-infinite-list', 'h-full')}>
             {showEmptyState ? (
                 <div className="no-infinite-results flex flex-col deprecated-space-y-1 items-center">
-                    <IconArchive className="text-5xl text-tertiary" />
-                    <span>
-                        {searchQuery ? (
-                            <>
-                                No results for "<strong>{searchQuery}</strong>"
-                            </>
-                        ) : (
-                            'No results'
-                        )}
-                    </span>
+                    {listGroupType === TaxonomicFilterGroupType.QuickFilters && !searchQuery ? (
+                        <>
+                            <IconSearch className="text-5xl text-tertiary" />
+                            <span className="text-secondary text-center">
+                                Try pasting an email, URL, screen name, or element text
+                            </span>
+                        </>
+                    ) : (
+                        <>
+                            <IconArchive className="text-5xl text-tertiary" />
+                            <span>
+                                {searchQuery ? (
+                                    <>
+                                        No results for "<strong>{searchQuery}</strong>"
+                                    </>
+                                ) : (
+                                    'No results'
+                                )}
+                            </span>
+                        </>
+                    )}
                 </div>
             ) : isLoading && (!results || results.length === 0) ? (
                 <div className="flex items-center justify-center h-full">
