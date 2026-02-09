@@ -15,6 +15,7 @@ import {
 import { InsightLogicProps, QueryBasedInsightModel } from '~/types'
 
 import type { alertFormLogicType } from './alertFormLogicType'
+import { alertNotificationLogic } from './alertNotificationLogic'
 import { insightAlertsLogic } from './insightAlertsLogic'
 import { AlertType, AlertTypeWrite } from './types'
 
@@ -141,22 +142,37 @@ export const alertFormLogic = kea<alertFormLogicType>([
                     }
                 }
 
+                const createPendingNotifications = async (alertId: string): Promise<boolean> => {
+                    const notifLogic = alertNotificationLogic({ alertId: props.alert?.id })
+                    if (notifLogic.values.pendingNotifications.length === 0) {
+                        return true
+                    }
+                    await notifLogic.asyncActions.createPendingHogFunctions(alertId)
+                    return notifLogic.values.pendingNotifications.length === 0
+                }
+
                 try {
                     if (alert.id === undefined) {
                         const updatedAlert: AlertType = await api.alerts.create(payload)
 
+                        const allNotificationsCreated = await createPendingNotifications(updatedAlert.id)
                         lemonToast.success(`Alert created.`)
                         upsertToParent(updatedAlert)
-                        props.onEditSuccess(updatedAlert.id)
+                        if (allNotificationsCreated) {
+                            props.onEditSuccess(updatedAlert.id)
+                        }
 
                         return updatedAlert
                     }
 
                     const updatedAlert: AlertType = await api.alerts.update(alert.id, payload)
 
+                    const allNotificationsCreated = await createPendingNotifications(updatedAlert.id)
                     lemonToast.success(`Alert saved.`)
                     upsertToParent(updatedAlert)
-                    props.onEditSuccess(updatedAlert.id)
+                    if (allNotificationsCreated) {
+                        props.onEditSuccess(updatedAlert.id)
+                    }
 
                     return updatedAlert
                 } catch (error: any) {
@@ -222,7 +238,6 @@ export const alertFormLogic = kea<alertFormLogicType>([
                 props.onEditSuccess(values.alertForm.id)
             },
             submitAlertFormSuccess: async () => {
-                // Background sync to pick up any server-side changes
                 getParentLogic()?.actions.loadAlerts()
             },
         }
