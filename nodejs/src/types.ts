@@ -60,6 +60,7 @@ export enum PluginServerMode {
     ingestion_logs = 'ingestion-logs',
     cdp_batch_hogflow_requests = 'cdp-batch-hogflow-requests',
     recording_api = 'recording-api',
+    cdp_cyclotron_shadow_worker = 'cdp-cyclotron-shadow-worker',
 }
 
 export const stringToPluginServerMode = Object.fromEntries(
@@ -189,6 +190,8 @@ export type CdpConfig = {
     // Cyclotron (CDP job queue)
     CYCLOTRON_DATABASE_URL: string
     CYCLOTRON_SHARD_DEPTH_LIMIT: number
+    CYCLOTRON_SHADOW_DATABASE_URL: string
+    CDP_CYCLOTRON_SHADOW_WRITE_ENABLED: boolean
 
     // SES (Workflows email sending)
     SES_ENDPOINT: string
@@ -506,6 +509,13 @@ export interface PluginsServerConfig
     POD_TERMINATION_ENABLED: boolean
     POD_TERMINATION_BASE_TIMEOUT_MINUTES: number
     POD_TERMINATION_JITTER_MINUTES: number
+
+    // ClickHouse
+    CLICKHOUSE_HOST: string
+    CLICKHOUSE_PORT: number
+    CLICKHOUSE_USERNAME: string
+    CLICKHOUSE_PASSWORD: string
+    CLICKHOUSE_DATABASE: string
 }
 
 export interface Hub extends PluginsServerConfig {
@@ -554,6 +564,7 @@ export interface PluginServerCapabilities {
     appManagementSingleton?: boolean
     evaluationScheduler?: boolean
     recordingApi?: boolean
+    cdpCyclotronShadowWorker?: boolean
 }
 
 export type TeamId = Team['id']

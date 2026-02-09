@@ -11,6 +11,7 @@ export const CAPABILITIES_CDP: PluginServerCapabilities = {
     cdpPersonUpdates: true,
     cdpInternalEvents: true,
     cdpCyclotronWorker: true,
+    cdpCyclotronShadowWorker: true,
     cdpApi: true,
     appManagementSingleton: true,
     cdpDataWarehouseEvents: false, // Not yet fully developed - enable when ready
@@ -208,6 +209,10 @@ export function getPluginServerCapabilities(config: PluginsServerConfig): Plugin
         case PluginServerMode.recording_api:
             return {
                 recordingApi: true,
+            }
+        case PluginServerMode.cdp_cyclotron_shadow_worker:
+            return {
+                cdpCyclotronShadowWorker: true,
             }
     }
 }
