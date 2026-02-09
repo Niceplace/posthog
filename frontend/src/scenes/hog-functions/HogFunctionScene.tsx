@@ -91,13 +91,18 @@ export const hogFunctionSceneLogic = kea<hogFunctionSceneLogicType>([
                 return value ? String(value) : undefined
             },
         ],
+        returnTo: [
+            () => [router.selectors.searchParams],
+            (searchParams: Record<string, string>): string | undefined => searchParams?.returnTo,
+        ],
         breadcrumbs: [
-            (s) => [s.type, s.loading, s.configuration, s.alertId, (_, props) => props.id ?? null],
+            (s) => [s.type, s.loading, s.configuration, s.alertId, s.returnTo, (_, props) => props.id ?? null],
             (
                 type: HogFunctionTypeType,
                 loading: boolean,
                 configuration: HogFunctionType | null,
                 alertId: string | undefined,
+                returnTo: string | undefined,
                 id: string | null
             ): Breadcrumb[] => {
                 if (loading) {
@@ -117,17 +122,22 @@ export const hogFunctionSceneLogic = kea<hogFunctionSceneLogicType>([
                 }
 
                 if (type === 'internal_destination' && alertId) {
+                    // returnTo contains the full path back to the alert edit view
+                    // Strip the alert_id param for the insight breadcrumb
+                    const alertPath = returnTo ?? urls.alert(alertId)
+                    const insightPath = returnTo ? returnTo.split('?')[0] : urls.alerts()
+
                     return [
                         {
                             key: Scene.Insight,
                             name: 'Insight',
-                            path: urls.alerts(),
+                            path: insightPath,
                             iconType: 'data_pipeline',
                         },
                         {
                             key: 'alert',
                             name: 'Alert',
-                            path: urls.alert(alertId),
+                            path: alertPath,
                             iconType: 'data_pipeline',
                         },
                         finalCrumb,

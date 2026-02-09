@@ -1453,7 +1453,9 @@ export const hogFunctionConfigurationLogic = kea<hogFunctionConfigurationLogicTy
                 // Catch all for any scenario where we need to redirect away from the template to the actual hog function
 
                 cache.disabledBeforeUnload = true
-                router.actions.replace(urls.hogFunction(hogFunction.id))
+                // Preserve returnTo search param so breadcrumbs can link back to the alert context
+                const { returnTo } = router.values.searchParams
+                router.actions.replace(urls.hogFunction(hogFunction.id), returnTo ? { returnTo } : undefined)
             }
         },
         sparklineQuery: async (sparklineQuery) => {
