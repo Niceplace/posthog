@@ -4,10 +4,9 @@ import { PluginEvent } from '@posthog/plugin-scaffold'
 
 import { HogTransformerService, TransformationResult } from '../../cdp/hog-transformations/hog-transformer.service'
 import { PipelineResultType, isDropResult, isOkResult } from '../pipelines/results'
-import { EventPipelineRunnerInput } from './event-pipeline-runner-v1-step'
-import { createHogTransformEventStep } from './hog-transform-event-step'
+import { HogTransformEventInput, createHogTransformEventStep } from './hog-transform-event-step'
 
-const createTestInput = (): EventPipelineRunnerInput => {
+const createTestInput = (): HogTransformEventInput => {
     return {
         event: {
             uuid: v4(),
@@ -19,7 +18,7 @@ const createTestInput = (): EventPipelineRunnerInput => {
         team: {
             id: 1,
         },
-    } as unknown as EventPipelineRunnerInput
+    } as unknown as HogTransformEventInput
 }
 
 const createMockHogTransformer = (transformFn: (event: PluginEvent) => TransformationResult): HogTransformerService => {
