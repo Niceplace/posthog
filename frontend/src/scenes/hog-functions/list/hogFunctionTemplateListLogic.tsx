@@ -48,7 +48,7 @@ export type HogFunctionTemplateListLogicProps = {
     hideComingSoonByDefault?: boolean
     customFilterFunction?: (template: HogFunctionTemplateType) => boolean
     /** Extra search params to include in the URL when navigating to create a new hog function */
-    urlSearchParams?: Record<string, string>
+    queryParams?: Record<string, string>
 }
 
 export const shouldShowHogFunctionTemplate = (
@@ -224,7 +224,7 @@ export const hogFunctionTemplateListLogic = kea<hogFunctionTemplateListLogicType
             () => [(_, props) => props],
             ({
                 getConfigurationOverrides,
-                urlSearchParams,
+                queryParams,
             }): ((template: HogFunctionTemplateWithSubTemplateType) => string | null) => {
                 return (template: HogFunctionTemplateWithSubTemplateType) => {
                     if (template.status === 'coming_soon') {
@@ -267,7 +267,7 @@ export const hogFunctionTemplateListLogic = kea<hogFunctionTemplateListLogicType
                         ...(filters ? { filters } : {}),
                     }
 
-                    return combineUrl(urls.hogFunctionNew(template.id), urlSearchParams ?? {}, {
+                    return combineUrl(urls.hogFunctionNew(template.id), queryParams ?? {}, {
                         configuration,
                     }).url
                 }

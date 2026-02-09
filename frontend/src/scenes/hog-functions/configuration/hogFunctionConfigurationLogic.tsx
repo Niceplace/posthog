@@ -1454,9 +1454,7 @@ export const hogFunctionConfigurationLogic = kea<hogFunctionConfigurationLogicTy
 
                 cache.disabledBeforeUnload = true
                 // Preserve existing search params (integration params, returnTo, etc.) on redirect
-                const searchParams = { ...router.values.searchParams }
-                delete searchParams.templateId
-                router.actions.replace(urls.hogFunction(hogFunction.id), searchParams)
+                router.actions.replace(urls.hogFunction(hogFunction.id), router.values.searchParams)
             }
         },
         sparklineQuery: async (sparklineQuery) => {

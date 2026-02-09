@@ -19,7 +19,7 @@ export function AlertDestinationSelector({ alertId, insightShortId }: AlertDesti
             subTemplateIds={[INSIGHT_ALERT_FIRING_SUB_TEMPLATE_ID]}
             hideFeedback={true}
             forceFilterGroups={[buildAlertFilterConfig(alertId)]}
-            urlSearchParams={{ returnTo }}
+            queryParams={{ returnTo }}
         />
     )
 }

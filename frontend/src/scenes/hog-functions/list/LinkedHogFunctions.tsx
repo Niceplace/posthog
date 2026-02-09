@@ -15,7 +15,7 @@ export type LinkedHogFunctionsProps = {
     newDisabledReason?: string
     hideFeedback?: boolean
     emptyText?: string
-    urlSearchParams?: Record<string, string>
+    queryParams?: Record<string, string>
 }
 
 const getFiltersFromSubTemplateId = (
@@ -32,7 +32,7 @@ export function LinkedHogFunctions({
     newDisabledReason,
     hideFeedback,
     emptyText,
-    urlSearchParams,
+    queryParams,
 }: LinkedHogFunctionsProps): JSX.Element | null {
     const [showNewDestination, setShowNewDestination] = useState(false)
     const logicKey = useMemo(() => {
@@ -66,7 +66,7 @@ export function LinkedHogFunctions({
             type={templateType}
             subTemplateIds={subTemplateIds}
             getConfigurationOverrides={getConfigurationOverrides}
-            urlSearchParams={urlSearchParams}
+            queryParams={queryParams}
             extraControls={
                 <>
                     <LemonButton type="secondary" size="small" onClick={() => setShowNewDestination(false)}>
