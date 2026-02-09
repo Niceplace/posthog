@@ -110,9 +110,11 @@ pub trait RebalanceHandler: Send + Sync {
     /// Called asynchronously after partition assignment.
     /// Use for slow initialization: downloading checkpoints, warming caches.
     ///
-    /// The `consumer_command_tx` can be used to send `ConsumerCommand::Resume` when
-    /// all stores are ready. Partitions are paused during assignment and must be
-    /// resumed after checkpoint import completes.
+    /// The `consumer_command_tx` can be used to send commands when all stores are ready.
+    /// Implementations may send `ConsumerCommand::SeekPartitions` for partitions that had
+    /// a successful checkpoint import (so the consumer position matches the restored store),
+    /// then `ConsumerCommand::Resume` for all owned partitions. Partitions are paused during
+    /// assignment and must be resumed after checkpoint import completes.
     ///
     /// Implementations should use `rebalance_tracker.get_owned_partitions()` to get
     /// the definitive list of owned partitions, as it reflects the final state after

@@ -55,7 +55,7 @@ pub struct BatchConsumer<T> {
     // in a spawned thread
     shutdown_rx: Receiver<()>,
 
-    // receiver for consumer commands (e.g., resume partitions after checkpoint import)
+    // receiver for consumer commands (e.g., seek partitions after checkpoint import, resume partitions)
     consumer_command_rx: ConsumerCommandReceiver,
 
     // timeout for seek_partitions after checkpoint import
@@ -79,7 +79,7 @@ where
         commit_interval: Duration,
         seek_timeout: Duration,
     ) -> Result<Self> {
-        // Create channel for consumer commands (e.g., resume partitions after checkpoint import)
+        // Create channel for consumer commands (e.g., seek partitions after checkpoint import, resume partitions)
         let (consumer_command_tx, consumer_command_rx) = mpsc::unbounded_channel();
 
         let consumer_ctx = BatchConsumerContext::new(rebalance_handler, consumer_command_tx);
@@ -128,7 +128,7 @@ where
                     break;
                 }
 
-                // Handle consumer commands (e.g., resume partitions after checkpoint import)
+                // Handle consumer commands (e.g., seek partitions after checkpoint import, resume partitions)
                 Some(command) = self.consumer_command_rx.recv() => {
                     match command {
                         ConsumerCommand::Resume(partitions) => {

@@ -217,6 +217,8 @@ where
     /// Get the setup task handle for a partition (if finalized).
     ///
     /// Returns a clone of the Shared handle that can be awaited by multiple callers.
+    /// Awaiting yields `SetupTaskResult`: `Some((partition, consumer_offset))` for successful
+    /// checkpoint import, `None` otherwise.
     /// Returns None if no task exists OR if task is claimed but not yet finalized.
     fn get_setup_task(&self, partition: &Partition) -> Option<SharedTaskHandle> {
         self.partition_setup_tasks
@@ -446,7 +448,7 @@ where
     /// 2. Checks if new rebalance started → early return if true
     /// 3. Creates fallback stores for owned partitions without stores
     /// 4. Cleans up unowned partition directories
-    /// 5. Resumes consumption
+    /// 5. Sends SeekPartitions for partitions with imported checkpoints (if any), then Resumes consumption
     ///
     /// When `we_are_finalizing_last` is true, we were invoked before decrementing (count still 1).
     /// We proceed if count == 1 (no new rebalance) and skip if count > 1. This keeps is_rebalancing()

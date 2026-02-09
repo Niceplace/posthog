@@ -103,14 +103,14 @@ impl BatchConsumerContext {
                     // Handler uses rebalance_tracker.get_owned_partitions() for the definitive list
                     // Note: setup_assigned_partitions was already called synchronously
                     // Note: Partitions were paused in post_rebalance, will be resumed after this completes
-                    // Note: Resume is now handled inside async_setup_assigned_partitions,
-                    // only when all overlapping rebalances are complete (counter == 0)
+                    // Note: SeekPartitions (for imported checkpoints) and Resume are sent from
+                    // finalize_rebalance_cycle when all setup tasks are done (counter == 0).
                     if let Err(e) = handler
                         .async_setup_assigned_partitions(&consumer_command_tx)
                         .await
                     {
                         // This error only occurs if the consumer command channel is broken.
-                        // Resume is handled by async_setup_assigned_partitions when appropriate.
+                        // SeekPartitions and Resume are sent from finalize_rebalance_cycle when appropriate.
                         error!("Partition assignment async setup failed: {}", e);
                     }
                 }
@@ -200,8 +200,9 @@ impl ConsumerContext for BatchConsumerContext {
                 // PAUSE partitions IMMEDIATELY to prevent message delivery
                 // until checkpoint import completes. This fixes the race condition
                 // where workers create fresh stores before checkpoints are imported.
-                // The partitions will be resumed after async_setup_assigned_partitions
-                // completes via a ConsumerCommand::Resume.
+                // The partitions will be resumed after async_setup_assigned_partitions completes.
+                // Finalize sends ConsumerCommand::SeekPartitions for partitions with imported
+                // checkpoints (if any), then ConsumerCommand::Resume for all owned partitions.
                 if let Err(e) = base_consumer.pause(partitions) {
                     error!(
                         "Failed to pause {} newly assigned partitions: {}",
@@ -225,7 +226,8 @@ impl ConsumerContext for BatchConsumerContext {
                 );
 
                 // ASYNC: Send event to worker for slow operations
-                // (downloading checkpoints, creating stores, then RESUME)
+                // (downloading checkpoints, creating stores, then SeekPartitions for imported
+                // checkpoints, then Resume)
                 // Handler uses rebalance_tracker.get_owned_partitions() for definitive list
                 if let Err(e) = self.rebalance_tx.send(RebalanceEvent::Assign) {
                     error!("Failed to send assign event to rebalance worker: {}", e);
