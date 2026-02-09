@@ -94,6 +94,7 @@ fn create_batch_kafka_consumer(
         batch_size,
         batch_timeout,
         Duration::from_secs(1),
+        Duration::from_secs(5), // seek_timeout
     )?;
 
     Ok((consumer, chan_rx, shutdown_tx))
@@ -477,6 +478,7 @@ async fn test_offset_commits_with_routing_processor() -> Result<()> {
         50, // batch size
         Duration::from_millis(100),
         Duration::from_millis(500), // commit interval - 500ms to ensure commits happen
+        Duration::from_secs(5),     // seek_timeout
     )?;
 
     // Step 4: Start consumption and wait for processing

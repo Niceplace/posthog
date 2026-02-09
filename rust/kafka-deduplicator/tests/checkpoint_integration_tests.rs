@@ -217,18 +217,22 @@ async fn test_checkpoint_export_import_via_minio() -> Result<()> {
         "Importer should be available"
     );
 
-    let import_result = importer
+    let (import_path, imported_metadata) = importer
         .import_checkpoint_for_topic_partition(test_topic, test_partition)
         .await?;
 
-    info!(path = ?import_result, "Imported checkpoint");
+    info!(path = ?import_path, consumer_offset = imported_metadata.consumer_offset, "Imported checkpoint");
     assert!(
-        import_result.exists(),
+        import_path.exists(),
         "Imported checkpoint directory should exist"
+    );
+    assert_eq!(
+        imported_metadata.consumer_offset, uploaded_info.metadata.consumer_offset,
+        "Imported checkpoint metadata should contain the original consumer_offset for seeking"
     );
 
     // Verify each file from metadata was imported
-    let all_imported_files: Vec<_> = std::fs::read_dir(&import_result)?
+    let all_imported_files: Vec<_> = std::fs::read_dir(&import_path)?
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
@@ -285,27 +289,27 @@ async fn test_checkpoint_export_import_via_minio() -> Result<()> {
 
     // Verify import result is within the store base directory
     assert!(
-        import_result.starts_with(tmp_import_dir.path()),
-        "Imported checkpoint should be within store base dir: {import_result:?} not in {:?}",
+        import_path.starts_with(tmp_import_dir.path()),
+        "Imported checkpoint should be within store base dir: {import_path:?} not in {:?}",
         tmp_import_dir.path()
     );
 
     // Verify store directory structure: <store_base>/<topic>_<partition>/<timestamp_millis>
-    // Note: import_result uses Utc::now() for the timestamp, so we just verify the path exists
+    // Note: import_path uses Utc::now() for the timestamp, so we just verify the path exists
     // rather than calculating the expected path (which would require the exact import timestamp)
     assert!(
-        import_result.exists(),
-        "Store directory structure should exist: {import_result:?}"
+        import_path.exists(),
+        "Store directory structure should exist: {import_path:?}"
     );
 
     // Drop the original store to release RocksDB locks
     drop(store);
 
     // Open a new store from the imported checkpoint to verify it's a valid RocksDB
-    info!(path = ?import_result, "Opening store from imported checkpoint");
+    info!(path = ?import_path, "Opening store from imported checkpoint");
     let restored_store_config = DeduplicationStoreConfig {
         // Checkpoint files are imported directly to the store directory
-        path: import_result.clone(),
+        path: import_path.clone(),
         max_capacity: 1_000_000,
     };
     let restored_store = DeduplicationStore::new(
@@ -504,7 +508,7 @@ async fn test_fallback_after_failed_attempt() -> Result<()> {
         "Import should succeed via fallback: {:?}",
         result.err()
     );
-    let import_path = result.unwrap();
+    let (import_path, _metadata) = result.unwrap();
 
     // Verify the imported checkpoint is from the OLDER (successful) checkpoint
     // by checking the marker file contains the older checkpoint's metadata
@@ -642,7 +646,7 @@ async fn test_parent_cancellation_stops_all_attempts() -> Result<()> {
     // The result may succeed (if download completed before cancellation) or fail
     // Either outcome is acceptable - we just verify no panic occurs
     info!(
-        result = ?result.as_ref().map(|p| p.display().to_string()).map_err(|e| e.to_string()),
+        result = ?result.as_ref().map(|(p, _)| p.display().to_string()).map_err(|e| e.to_string()),
         "Mid-download cancellation test completed (result depends on timing)"
     );
 

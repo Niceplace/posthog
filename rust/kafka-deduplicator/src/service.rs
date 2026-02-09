@@ -455,6 +455,7 @@ impl KafkaDeduplicatorService {
             self.config.kafka_consumer_batch_size,
             self.config.kafka_consumer_batch_timeout(),
             self.config.commit_interval(),
+            self.config.kafka_consumer_seek_timeout(),
         )
         .with_context(|| {
             format!(

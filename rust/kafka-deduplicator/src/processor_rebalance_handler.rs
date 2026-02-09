@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use futures::future::{join_all, Shared};
-use rdkafka::TopicPartitionList;
+use rdkafka::{Offset, TopicPartitionList};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -25,10 +25,18 @@ use crate::metrics_const::{
 use crate::rebalance_tracker::RebalanceTracker;
 use crate::store_manager::StoreManager;
 
-/// Type alias for the shared task handle. The closure maps JoinHandle's Result to ()
-/// so it can be Clone (required by Shared).
-type SharedTaskHandle =
-    Shared<futures::future::Map<JoinHandle<()>, fn(Result<(), tokio::task::JoinError>) -> ()>>;
+/// Result type for partition setup tasks: Some((partition, consumer_offset)) if checkpoint was imported,
+/// None if import failed/skipped/cancelled (will use fallback empty store).
+type SetupTaskResult = Option<(Partition, i64)>;
+
+/// Type alias for the shared task handle. The closure extracts the task result,
+/// returning None if the task panicked.
+type SharedTaskHandle = Shared<
+    futures::future::Map<
+        JoinHandle<SetupTaskResult>,
+        fn(Result<SetupTaskResult, tokio::task::JoinError>) -> SetupTaskResult,
+    >,
+>;
 
 /// Tracks a partition setup task with its cancellation token.
 ///
@@ -191,15 +199,17 @@ where
     ///
     /// Must be called after `try_claim_partition_setup()` returns true.
     /// Converts the JoinHandle to a Shared future so multiple callers can await it.
-    fn finalize_partition_setup(&self, partition: &Partition, handle: JoinHandle<()>) {
+    fn finalize_partition_setup(&self, partition: &Partition, handle: JoinHandle<SetupTaskResult>) {
         use futures::future::FutureExt;
 
-        // Helper function to discard JoinHandle result (must be fn, not closure, for type matching)
-        fn discard_result(_: Result<(), tokio::task::JoinError>) {}
+        fn extract_result(r: Result<SetupTaskResult, tokio::task::JoinError>) -> SetupTaskResult {
+            r.unwrap_or(None)
+        }
 
         if let Some(mut task) = self.partition_setup_tasks.get_mut(partition) {
-            // Map the JoinHandle result to () so it's Clone (required for Shared)
-            let shared_handle = handle.map(discard_result as fn(_) -> ()).shared();
+            let shared_handle = handle
+                .map(extract_result as fn(_) -> SetupTaskResult)
+                .shared();
             task.handle = Some(shared_handle);
         }
     }
@@ -255,7 +265,7 @@ where
         &self,
         partition: Partition,
         cancel_token: CancellationToken,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> tokio::task::JoinHandle<SetupTaskResult> {
         let store_manager = self.store_manager.clone();
         let coordinator = self.rebalance_tracker.clone();
         let importer = self.checkpoint_importer.clone();
@@ -270,7 +280,7 @@ where
                 )
                 .increment(1);
                 fallback_reasons.insert(partition.clone(), "import_cancelled");
-                return;
+                return None;
             }
 
             // Skip if store already exists (handles rapid revoke→assign race)
@@ -284,7 +294,7 @@ where
                     "reason" => "store_exists",
                 )
                 .increment(1);
-                return;
+                return None;
             }
 
             // Try checkpoint import WITH per-partition cancellation token
@@ -299,7 +309,7 @@ where
                     )
                     .await
                 {
-                    Ok(path) => {
+                    Ok((path, metadata)) => {
                         // === CHECKPOINT 2: After download completes ===
                         // Check if we should skip registration (token cancelled or ownership lost)
                         let is_cancelled = cancel_token.is_cancelled();
@@ -353,7 +363,7 @@ where
                                     }
                                 }
                             }
-                            return;
+                            return None;
                         }
 
                         // Register imported store
@@ -371,9 +381,11 @@ where
                                 info!(
                                     topic = partition.topic(),
                                     partition = partition.partition_number(),
+                                    consumer_offset = metadata.consumer_offset,
                                     path = %path.display(),
-                                    "Imported checkpoint for partition"
+                                    "Imported checkpoint for partition, will seek to offset"
                                 );
+                                return Some((partition, metadata.consumer_offset));
                             }
                             Err(e) => {
                                 metrics::counter!(
@@ -391,6 +403,7 @@ where
                                 fallback_reasons.insert(partition.clone(), "import_failed");
                             }
                         }
+                        return None;
                     }
                     Err(e) => {
                         // Only log if not cancelled (expected during revoke)
@@ -422,6 +435,7 @@ where
                 .increment(1);
                 fallback_reasons.insert(partition.clone(), "no_importer");
             }
+            None
         })
     }
 
@@ -444,7 +458,7 @@ where
     ) -> Result<()> {
         info!("Finalizing rebalance cycle - awaiting import tasks");
 
-        // Step 1: Await all pending import tasks in parallel
+        // Step 1: Await all pending import tasks in parallel and collect seek offsets
         let owned_partitions = self.rebalance_tracker.get_owned_partitions();
         let task_futures: Vec<(Partition, SharedTaskHandle)> = owned_partitions
             .iter()
@@ -454,7 +468,8 @@ where
             })
             .collect();
         let (partitions, handles): (Vec<_>, Vec<_>) = task_futures.into_iter().unzip();
-        let _ = join_all(handles).await; // Ignore panic results - tasks handle their own errors
+        let results: Vec<SetupTaskResult> = join_all(handles).await;
+        let seek_offsets: Vec<(Partition, i64)> = results.into_iter().flatten().collect();
         for partition in &partitions {
             self.complete_setup_task(partition);
         }
@@ -533,7 +548,41 @@ where
             );
         }
 
-        // Step 5: Resume consumption
+        // Step 5: SeekPartitions (for imported checkpoints) then Resume
+        if !seek_offsets.is_empty() {
+            let mut seek_tpl = TopicPartitionList::new();
+            for (partition, offset) in &seek_offsets {
+                if owned.contains(partition) {
+                    seek_tpl
+                        .add_partition_offset(
+                            partition.topic(),
+                            partition.partition_number(),
+                            Offset::Offset(*offset),
+                        )
+                        .expect("add_partition_offset should not fail");
+                } else {
+                    debug!(
+                        topic = partition.topic(),
+                        partition = partition.partition_number(),
+                        "Skipping seek for partition revoked during setup"
+                    );
+                }
+            }
+            if seek_tpl.count() > 0 {
+                info!(
+                    partition_count = seek_tpl.count(),
+                    "Sending seek_partitions command for imported checkpoints"
+                );
+                if let Err(e) = consumer_command_tx.send(ConsumerCommand::SeekPartitions(seek_tpl))
+                {
+                    warn!(
+                        error = %e,
+                        "Failed to send seek_partitions command - continuing with resume"
+                    );
+                }
+            }
+        }
+
         if owned.is_empty() {
             info!("No owned partitions to resume");
             metrics::counter!(REBALANCE_RESUME_SKIPPED_NO_OWNED).increment(1);
@@ -1226,6 +1275,16 @@ mod tests {
                     "Resume command should contain all assigned partitions"
                 );
             }
+            ConsumerCommand::SeekPartitions(_) => {
+                // No checkpoint importer in this test - if we get SeekPartitions, next must be Resume
+                let cmd2 = rx
+                    .try_recv()
+                    .expect("Should have received Resume after SeekPartitions");
+                let ConsumerCommand::Resume(resume_partitions) = cmd2 else {
+                    panic!("Expected Resume command, got {:?}", cmd2);
+                };
+                assert_eq!(resume_partitions.count(), 2);
+            }
         }
 
         // Verify stores were created
@@ -1299,7 +1358,9 @@ mod tests {
 
         // Should have received exactly one Resume command (from the last rebalance)
         let cmd = rx.try_recv().expect("Should have received Resume command");
-        let ConsumerCommand::Resume(tpl) = cmd;
+        let ConsumerCommand::Resume(tpl) = cmd else {
+            panic!("Expected Resume command, got {:?}", cmd);
+        };
         // Should resume both partitions
         assert_eq!(tpl.count(), 2, "Should resume all owned partitions");
 
@@ -1392,6 +1453,23 @@ mod tests {
                     !partition_nums.contains(&1),
                     "Partition 1 should NOT be in Resume (not owned)"
                 );
+            }
+            ConsumerCommand::SeekPartitions(_) => {
+                let cmd2 = rx
+                    .try_recv()
+                    .expect("Should have received Resume after SeekPartitions");
+                let ConsumerCommand::Resume(resume_partitions) = cmd2 else {
+                    panic!("Expected Resume command, got {:?}", cmd2);
+                };
+                assert_eq!(resume_partitions.count(), 2);
+                let partition_nums: Vec<i32> = resume_partitions
+                    .elements()
+                    .iter()
+                    .map(|e| e.partition())
+                    .collect();
+                assert!(partition_nums.contains(&0));
+                assert!(partition_nums.contains(&2));
+                assert!(!partition_nums.contains(&1));
             }
         }
 
@@ -1628,6 +1706,14 @@ mod tests {
                 let elements = tpl.elements();
                 assert_eq!(elements[0].partition(), 0, "Should resume partition 0");
             }
+            ConsumerCommand::SeekPartitions(_) => {
+                let cmd2 = rx.try_recv().expect("Should have received Resume");
+                let ConsumerCommand::Resume(tpl) = cmd2 else {
+                    panic!("Expected Resume command, got {:?}", cmd2);
+                };
+                assert_eq!(tpl.count(), 1);
+                assert_eq!(tpl.elements()[0].partition(), 0);
+            }
         }
 
         // Verify partition 0's store still exists after B completes
@@ -1705,11 +1791,70 @@ mod tests {
                 assert!(topics.contains(&"topic-a"), "topic-a:0 should be resumed");
                 assert!(topics.contains(&"topic-b"), "topic-b:0 should be resumed");
             }
+            ConsumerCommand::SeekPartitions(_) => {
+                let cmd2 = rx.try_recv().expect("Should have received Resume");
+                let ConsumerCommand::Resume(tpl) = cmd2 else {
+                    panic!("Expected Resume command, got {:?}", cmd2);
+                };
+                assert_eq!(tpl.count(), 2);
+                let elements = tpl.elements();
+                let topics: Vec<&str> = elements.iter().map(|e| e.topic()).collect();
+                assert!(topics.contains(&"topic-a"));
+                assert!(topics.contains(&"topic-b"));
+            }
         }
 
         // Verify stores created for owned partitions only
         assert!(store_manager.get("topic-a", 0).is_some());
         assert!(store_manager.get("topic-a", 1).is_none());
         assert!(store_manager.get("topic-b", 0).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_async_setup_no_seek_without_checkpoint_importer() {
+        // When checkpoint_importer is None, no SeekPartitions command is sent.
+        let temp_dir = TempDir::new().unwrap();
+        let store_config = DeduplicationStoreConfig {
+            path: temp_dir.path().to_path_buf(),
+            max_capacity: 1000,
+        };
+        let coordinator = create_test_tracker();
+        let store_manager = Arc::new(StoreManager::new(store_config, coordinator.clone()));
+        let offset_tracker = Arc::new(OffsetTracker::new(coordinator.clone()));
+
+        let handler: ProcessorRebalanceHandler<String, TestProcessor> =
+            ProcessorRebalanceHandler::new(
+                store_manager.clone(),
+                coordinator,
+                offset_tracker,
+                None, // No checkpoint importer
+                16,
+            );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let mut partitions = rdkafka::TopicPartitionList::new();
+        partitions
+            .add_partition_offset("test-topic", 0, Offset::Beginning)
+            .unwrap();
+        partitions
+            .add_partition_offset("test-topic", 1, Offset::Beginning)
+            .unwrap();
+
+        handler.setup_assigned_partitions(&partitions);
+        handler.async_setup_assigned_partitions(&tx).await.unwrap();
+
+        // Should only receive Resume, no SeekPartitions (since no checkpoint importer)
+        let command = rx.try_recv().expect("Should have received a command");
+        let ConsumerCommand::Resume(resume_partitions) = command else {
+            panic!("Expected Resume command, got {:?}", command);
+        };
+        assert_eq!(resume_partitions.count(), 2);
+
+        // No more commands - specifically no SeekPartitions
+        assert!(
+            rx.try_recv().is_err(),
+            "Should not have received SeekPartitions without checkpoint importer"
+        );
     }
 }
