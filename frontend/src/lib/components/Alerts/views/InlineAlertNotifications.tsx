@@ -1,25 +1,19 @@
 import { useActions, useValues } from 'kea'
-import { useState } from 'react'
 
 import { IconExternal, IconTrash } from '@posthog/icons'
-import { LemonBanner, LemonButton, LemonInput, LemonSelect, LemonSkeleton, LemonTag, Link } from '@posthog/lemon-ui'
+import { LemonButton, LemonInput, LemonSelect, LemonSkeleton, LemonTag } from '@posthog/lemon-ui'
 
-import api from 'lib/api'
-import { SlackChannelPicker } from 'lib/integrations/SlackIntegrationHelpers'
-import { integrationsLogic } from 'lib/integrations/integrationsLogic'
-import { PendingAlertNotification } from 'lib/utils/alertUtils'
+import { SlackChannelPicker, SlackNotConfiguredBanner } from 'lib/integrations/SlackIntegrationHelpers'
+import {
+    ALERT_NOTIFICATION_TYPE_SLACK,
+    ALERT_NOTIFICATION_TYPE_WEBHOOK,
+    PendingAlertNotification,
+} from 'lib/utils/alertUtils'
 import { urls } from 'scenes/urls'
 
 import { HogFunctionType } from '~/types'
 
-import { alertNotificationLogic } from '../alertNotificationLogic'
-
-type NotificationType = 'slack' | 'webhook'
-
-const notificationTypeOptions = [
-    { label: 'Slack', value: 'slack' as const },
-    { label: 'Webhook', value: 'webhook' as const },
-]
+import { ALERT_NOTIFICATION_TYPE_OPTIONS, alertNotificationLogic } from '../alertNotificationLogic'
 
 function getHogFunctionDestination(hf: HogFunctionType): { type: string; detail: string | null } {
     const channelValue = hf.inputs?.channel?.value
@@ -40,25 +34,33 @@ interface InlineAlertNotificationsProps {
 
 export function InlineAlertNotifications({ alertId }: InlineAlertNotificationsProps): JSX.Element {
     const logic = alertNotificationLogic({ alertId })
-    const { existingHogFunctions, existingHogFunctionsLoading, pendingNotifications } = useValues(logic)
-    const { addPendingNotification, removePendingNotification, deleteExistingHogFunction } = useActions(logic)
-
-    const { slackIntegrations } = useValues(integrationsLogic)
-    const firstSlackIntegration = slackIntegrations?.[0]
-
-    const [selectedType, setSelectedType] = useState<NotificationType>(firstSlackIntegration ? 'slack' : 'webhook')
-    const [slackChannelValue, setSlackChannelValue] = useState<string | null>(null)
-    const [webhookUrl, setWebhookUrl] = useState('')
+    const {
+        existingHogFunctions,
+        existingHogFunctionsLoading,
+        pendingNotifications,
+        firstSlackIntegration,
+        selectedType,
+        slackChannelValue,
+        webhookUrl,
+    } = useValues(logic)
+    const {
+        addPendingNotification,
+        removePendingNotification,
+        deleteExistingHogFunction,
+        setSelectedType,
+        setSlackChannelValue,
+        setWebhookUrl,
+    } = useActions(logic)
 
     const handleAdd = (): void => {
-        if (selectedType === 'slack') {
+        if (selectedType === ALERT_NOTIFICATION_TYPE_SLACK) {
             if (!slackChannelValue) {
                 return
             }
             const channelName = slackChannelValue.split('|')[1]?.replace('#', '') ?? slackChannelValue
 
             const notification: PendingAlertNotification = {
-                type: 'slack',
+                type: ALERT_NOTIFICATION_TYPE_SLACK,
                 slackWorkspaceId: firstSlackIntegration?.id,
                 slackChannelId: slackChannelValue,
                 slackChannelName: channelName,
@@ -69,13 +71,13 @@ export function InlineAlertNotifications({ alertId }: InlineAlertNotificationsPr
             if (!webhookUrl) {
                 return
             }
-            addPendingNotification({ type: 'webhook', webhookUrl })
+            addPendingNotification({ type: ALERT_NOTIFICATION_TYPE_WEBHOOK, webhookUrl })
             setWebhookUrl('')
         }
     }
 
     const getNotificationLabel = (notification: PendingAlertNotification): string => {
-        if (notification.type === 'slack') {
+        if (notification.type === ALERT_NOTIFICATION_TYPE_SLACK) {
             return `Slack: #${notification.slackChannelName ?? 'channel'}`
         }
         return `Webhook: ${notification.webhookUrl}`
@@ -157,39 +159,17 @@ export function InlineAlertNotifications({ alertId }: InlineAlertNotificationsPr
                     <div className="flex-1">
                         <LemonSelect
                             fullWidth
-                            options={notificationTypeOptions}
+                            options={ALERT_NOTIFICATION_TYPE_OPTIONS}
                             value={selectedType}
                             onChange={(value) => setSelectedType(value)}
                         />
                     </div>
                 </div>
 
-                {selectedType === 'slack' && (
+                {selectedType === ALERT_NOTIFICATION_TYPE_SLACK && (
                     <>
                         {!firstSlackIntegration ? (
-                            <LemonBanner type="info">
-                                <div className="flex justify-between gap-2 items-center">
-                                    <span>
-                                        Slack is not yet configured for this project. Add PostHog to your Slack
-                                        workspace to continue.
-                                    </span>
-                                    <Link
-                                        to={api.integrations.authorizeUrl({
-                                            kind: 'slack',
-                                            next: window.location.pathname + '?target_type=slack',
-                                        })}
-                                        disableClientSideRouting
-                                    >
-                                        <img
-                                            alt="Add to Slack"
-                                            height="40"
-                                            width="139"
-                                            src="https://platform.slack-edge.com/img/add_to_slack.png"
-                                            srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
-                                        />
-                                    </Link>
-                                </div>
-                            </LemonBanner>
+                            <SlackNotConfiguredBanner />
                         ) : (
                             <SlackChannelPicker
                                 value={slackChannelValue ?? undefined}
@@ -200,7 +180,7 @@ export function InlineAlertNotifications({ alertId }: InlineAlertNotificationsPr
                     </>
                 )}
 
-                {selectedType === 'webhook' && (
+                {selectedType === ALERT_NOTIFICATION_TYPE_WEBHOOK && (
                     <LemonInput
                         placeholder="https://example.com/webhook"
                         value={webhookUrl}
@@ -214,7 +194,7 @@ export function InlineAlertNotifications({ alertId }: InlineAlertNotificationsPr
                     size="small"
                     onClick={handleAdd}
                     disabledReason={
-                        selectedType === 'slack'
+                        selectedType === ALERT_NOTIFICATION_TYPE_SLACK
                             ? !firstSlackIntegration
                                 ? 'Connect Slack first'
                                 : !slackChannelValue

@@ -143,7 +143,7 @@ export const alertFormLogic = kea<alertFormLogicType>([
                 }
 
                 const createPendingNotifications = async (alertId: string): Promise<boolean> => {
-                    const notifLogic = alertNotificationLogic({ alertId: props.alert?.id })
+                    const notifLogic = alertNotificationLogic({ alertId })
                     if (notifLogic.values.pendingNotifications.length === 0) {
                         return true
                     }
@@ -238,6 +238,7 @@ export const alertFormLogic = kea<alertFormLogicType>([
                 props.onEditSuccess(values.alertForm.id)
             },
             submitAlertFormSuccess: async () => {
+                // Background sync to pick up any server-side changes
                 getParentLogic()?.actions.loadAlerts()
             },
         }

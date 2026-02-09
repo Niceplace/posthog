@@ -1,7 +1,14 @@
-import { INSIGHT_ALERT_FIRING_EVENT_ID } from 'lib/constants'
-import { HOG_FUNCTION_SUB_TEMPLATE_COMMON_PROPERTIES } from 'scenes/hog-functions/sub-templates/sub-templates'
+import { INSIGHT_ALERT_FIRING_EVENT_ID, INSIGHT_ALERT_FIRING_SUB_TEMPLATE_ID } from 'lib/constants'
+import {
+    HOG_FUNCTION_SUB_TEMPLATES,
+    HOG_FUNCTION_SUB_TEMPLATE_COMMON_PROPERTIES,
+} from 'scenes/hog-functions/sub-templates/sub-templates'
 
 import { CyclotronJobFiltersType, HogFunctionType, PropertyFilterType, PropertyOperator } from '~/types'
+
+export const ALERT_NOTIFICATION_TYPE_SLACK = 'slack' as const
+export const ALERT_NOTIFICATION_TYPE_WEBHOOK = 'webhook' as const
+export type AlertNotificationType = typeof ALERT_NOTIFICATION_TYPE_SLACK | typeof ALERT_NOTIFICATION_TYPE_WEBHOOK
 
 export const buildAlertFilterConfig = (alertId: string): CyclotronJobFiltersType => ({
     properties: [
@@ -20,47 +27,12 @@ export const buildAlertFilterConfig = (alertId: string): CyclotronJobFiltersType
     ],
 })
 
-const INSIGHT_ALERT_SLACK_INPUTS: Record<string, any> = {
-    blocks: {
-        value: [
-            {
-                type: 'header',
-                text: {
-                    type: 'plain_text',
-                    text: "Alert '{event.properties.alert_name}' firing for insight '{event.properties.insight_name}'",
-                },
-            },
-            {
-                type: 'section',
-                text: { type: 'plain_text', text: '{event.properties.breaches}' },
-            },
-            {
-                type: 'context',
-                elements: [{ type: 'mrkdwn', text: 'Project: <{project.url}|{project.name}>' }],
-            },
-            { type: 'divider' },
-            {
-                type: 'actions',
-                elements: [
-                    {
-                        url: '{project.url}/insights/{event.properties.insight_id}',
-                        text: { text: 'View Insight', type: 'plain_text' },
-                        type: 'button',
-                    },
-                    {
-                        url: '{project.url}/insights/{event.properties.insight_id}/alerts?alert_id={event.properties.alert_id}',
-                        text: { text: 'View Alert', type: 'plain_text' },
-                        type: 'button',
-                    },
-                ],
-            },
-        ],
-    },
-    text: { value: 'Alert triggered: {event.properties.insight_name}' },
-}
+const INSIGHT_ALERT_SLACK_INPUTS =
+    HOG_FUNCTION_SUB_TEMPLATES[INSIGHT_ALERT_FIRING_SUB_TEMPLATE_ID].find((t) => t.template_id === 'template-slack')
+        ?.inputs ?? {}
 
 export type PendingAlertNotification = {
-    type: 'slack' | 'webhook'
+    type: typeof ALERT_NOTIFICATION_TYPE_SLACK | typeof ALERT_NOTIFICATION_TYPE_WEBHOOK
     slackWorkspaceId?: number
     slackChannelId?: string
     slackChannelName?: string
@@ -71,7 +43,7 @@ export function buildHogFunctionPayload(
     alertId: string,
     notification: PendingAlertNotification
 ): Partial<HogFunctionType> {
-    const commonProps = HOG_FUNCTION_SUB_TEMPLATE_COMMON_PROPERTIES['insight-alert-firing']
+    const commonProps = HOG_FUNCTION_SUB_TEMPLATE_COMMON_PROPERTIES[INSIGHT_ALERT_FIRING_SUB_TEMPLATE_ID]
     const base = {
         type: commonProps.type,
         enabled: true,
@@ -94,7 +66,7 @@ export function buildHogFunctionPayload(
 
     return {
         ...base,
-        name: `Alert notification: Webhook`,
+        name: `Alert notification: Webhook ${notification.webhookUrl}`,
         template_id: 'template-webhook',
         inputs: {
             url: { value: notification.webhookUrl },

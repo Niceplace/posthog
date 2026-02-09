@@ -57,7 +57,7 @@ describe('alertUtils', () => {
                     type: 'webhook' as const,
                     webhookUrl: 'https://example.com/hook',
                 },
-                expectedName: 'Alert notification: Webhook',
+                expectedName: 'Alert notification: Webhook https://example.com/hook',
                 expectedTemplateId: 'template-webhook',
                 expectedInputKeys: ['url', 'body'],
             },

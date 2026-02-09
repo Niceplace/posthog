@@ -1,15 +1,28 @@
-import { actions, afterMount, connect, kea, key, listeners, path, props, reducers } from 'kea'
+import { actions, afterMount, connect, kea, key, listeners, path, props, reducers, selectors } from 'kea'
 import { loaders } from 'kea-loaders'
 
 import api from 'lib/api'
+import { integrationsLogic } from 'lib/integrations/integrationsLogic'
 import { lemonToast } from 'lib/lemon-ui/LemonToast/LemonToast'
-import { PendingAlertNotification, buildAlertFilterConfig, buildHogFunctionPayload } from 'lib/utils/alertUtils'
+import {
+    ALERT_NOTIFICATION_TYPE_SLACK,
+    ALERT_NOTIFICATION_TYPE_WEBHOOK,
+    AlertNotificationType,
+    PendingAlertNotification,
+    buildAlertFilterConfig,
+    buildHogFunctionPayload,
+} from 'lib/utils/alertUtils'
 import { deleteWithUndo } from 'lib/utils/deleteWithUndo'
 import { projectLogic } from 'scenes/projectLogic'
 
-import { HogFunctionType } from '~/types'
+import { HogFunctionType, IntegrationType } from '~/types'
 
 import type { alertNotificationLogicType } from './alertNotificationLogicType'
+
+export const ALERT_NOTIFICATION_TYPE_OPTIONS = [
+    { label: 'Slack', value: ALERT_NOTIFICATION_TYPE_SLACK },
+    { label: 'Webhook', value: ALERT_NOTIFICATION_TYPE_WEBHOOK },
+]
 
 export interface AlertNotificationLogicProps {
     alertId?: string
@@ -21,7 +34,7 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
     key(({ alertId }) => alertId ?? 'new'),
 
     connect({
-        values: [projectLogic, ['currentProjectId']],
+        values: [projectLogic, ['currentProjectId'], integrationsLogic, ['slackIntegrations']],
     }),
 
     actions({
@@ -31,6 +44,9 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
         setPendingNotifications: (notifications: PendingAlertNotification[]) => ({ notifications }),
         deleteExistingHogFunction: (hogFunction: HogFunctionType) => ({ hogFunction }),
         createPendingHogFunctions: (alertId: string) => ({ alertId }),
+        setSelectedType: (selectedType: AlertNotificationType) => ({ selectedType }),
+        setSlackChannelValue: (slackChannelValue: string | null) => ({ slackChannelValue }),
+        setWebhookUrl: (webhookUrl: string) => ({ webhookUrl }),
     }),
 
     reducers({
@@ -42,6 +58,39 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
                 clearPendingNotifications: () => [],
                 setPendingNotifications: (_, { notifications }) => notifications,
             },
+        ],
+        slackChannelValue: [
+            null as string | null,
+            {
+                setSlackChannelValue: (_, { slackChannelValue }) => slackChannelValue,
+            },
+        ],
+        webhookUrl: [
+            '' as string,
+            {
+                setWebhookUrl: (_, { webhookUrl }) => webhookUrl,
+            },
+        ],
+        selectedType: [
+            ALERT_NOTIFICATION_TYPE_SLACK as AlertNotificationType,
+            {
+                setSelectedType: (_, { selectedType }) => selectedType,
+            },
+        ],
+        existingHogFunctions: [
+            [] as HogFunctionType[],
+            {
+                // Optimistic removal so the item disappears immediately
+                deleteExistingHogFunction: (state, { hogFunction }) => state.filter((hf) => hf.id !== hogFunction.id),
+            },
+        ],
+    }),
+
+    selectors({
+        // Use first available Slack integration to determine if Slack should be the default notification type
+        firstSlackIntegration: [
+            (s) => [s.slackIntegrations],
+            (slackIntegrations: IntegrationType[] | undefined): IntegrationType | undefined => slackIntegrations?.[0],
         ],
     }),
 
@@ -63,13 +112,6 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
             },
         ],
     })),
-
-    // Optimistic removal so the item disappears immediately
-    reducers({
-        existingHogFunctions: {
-            deleteExistingHogFunction: (state, { hogFunction }) => state.filter((hf) => hf.id !== hogFunction.id),
-        },
-    }),
 
     listeners(({ actions, values }) => ({
         deleteExistingHogFunction: async ({ hogFunction }) => {
@@ -100,11 +142,10 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
                 })
             )
 
-            const failures = results.filter((r) => r.status === 'rejected')
             const failedNotifications = pending.filter((_, i) => results[i].status === 'rejected')
 
-            if (failures.length > 0) {
-                lemonToast.error(`Failed to create ${failures.length} notification(s).`)
+            if (failedNotifications.length > 0) {
+                lemonToast.error(`Failed to create ${failedNotifications.length} notification(s).`)
                 actions.setPendingNotifications(failedNotifications)
             } else {
                 if (results.length > 0) {
@@ -117,9 +158,12 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
         },
     })),
 
-    afterMount(({ actions, props }) => {
+    afterMount(({ actions, props, values }) => {
         if (props.alertId) {
             actions.loadExistingHogFunctions()
+        }
+        if (!values.firstSlackIntegration) {
+            actions.setSelectedType(ALERT_NOTIFICATION_TYPE_WEBHOOK)
         }
     }),
 ])
