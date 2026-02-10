@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use super::hash_prefix::hash_prefix_for_partition;
 use super::{CheckpointFile, CheckpointInfo, CheckpointMetadata};
 use crate::kafka::types::Partition;
 use crate::metrics_const::CHECKPOINT_PLAN_FILE_TRACKED_COUNTER;
@@ -39,7 +40,8 @@ pub fn plan_checkpoint(
         consumer_offset,
         producer_offset,
     );
-    let mut info = CheckpointInfo::new(metadata, remote_bucket_namespace);
+    let hash_prefix = hash_prefix_for_partition(partition.topic(), partition.partition_number());
+    let mut info = CheckpointInfo::new(metadata, remote_bucket_namespace, Some(hash_prefix));
     let mut files_to_upload: Vec<LocalCheckpointFile> = Vec::new();
 
     // Collect all files in local checkpoint directory
@@ -306,10 +308,11 @@ mod tests {
         assert_eq!(got_sst1, &expected_sst1);
         assert_eq!(got_sst2, &expected_sst2);
 
-        // With no previous metadata, all files should be tracked in metadata
+        // With no previous metadata, all files should be tracked in metadata (object paths include hash)
         assert_eq!(plan.info.metadata.files.len(), 2);
+        let hash = hash_prefix_for_partition(topic, partition_number);
         let expected_remote_path =
-            format!("{remote_bucket_namespace}/{topic}/{partition_number}/{checkpoint_id}");
+            format!("{remote_bucket_namespace}/{hash}/{topic}/{partition_number}/{checkpoint_id}");
         assert!(plan
             .info
             .metadata
@@ -385,6 +388,9 @@ mod tests {
 
         let attempt_timestamp = Utc::now();
         let checkpoint_id = CheckpointMetadata::generate_id(attempt_timestamp);
+        let hash = hash_prefix_for_partition(topic, partition_number);
+        let current_attempt_remote_path_with_hash =
+            format!("{remote_bucket_namespace}/{hash}/{topic}/{partition_number}/{checkpoint_id}");
         let sequence = 1001;
         let consumer_offset = 100;
         let producer_offset = 200;
@@ -443,13 +449,10 @@ mod tests {
         assert_eq!(&sst1_file_meta.checksum, &expected_prev_sst1.checksum);
         assert_eq!(&sst2_file_meta.checksum, &expected_prev_sst2.checksum);
 
-        // Check that file3 is in metadata as a reference
-        let current_attempt_remote_path =
-            format!("{remote_bucket_namespace}/{topic}/{partition_number}/{checkpoint_id}");
-
+        // Check that file3 is in metadata as a reference (current attempt uses hashed path)
         let sst1_remote_path = format!("{prev_remote_path}/00001.sst");
         let sst2_remote_path = format!("{prev_remote_path}/00002.sst");
-        let sst3_remote_path = format!("{current_attempt_remote_path}/00003.sst");
+        let sst3_remote_path = format!("{current_attempt_remote_path_with_hash}/00003.sst");
 
         let sst1_file_meta = plan
             .info
@@ -753,15 +756,16 @@ mod tests {
         assert_eq!(plan.info.metadata.files.len(), 7);
 
         // validate the right checkpoint metadata was retained from previous vs. current checkpoint attempts
-        let current_attempt_remote_path =
-            format!("{remote_bucket_namespace}/{topic}/{partition_number}/{checkpoint_id}");
+        let hash = hash_prefix_for_partition(topic, partition_number);
+        let current_attempt_remote_path_with_hash =
+            format!("{remote_bucket_namespace}/{hash}/{topic}/{partition_number}/{checkpoint_id}");
         let sst1_remote_path = format!("{prev_remote_path}/00001.sst");
         let sst2_remote_path = format!("{prev_remote_path}/00002.sst");
-        let sst3_remote_path = format!("{current_attempt_remote_path}/00003.sst");
+        let sst3_remote_path = format!("{current_attempt_remote_path_with_hash}/00003.sst");
         let manifest_remote_path = format!("{prev_remote_path}/MANIFEST-000000");
         let options_remote_path = format!("{prev_remote_path}/OPTIONS-000000");
-        let current_remote_path = format!("{current_attempt_remote_path}/CURRENT");
-        let log_remote_path = format!("{current_attempt_remote_path}/00001.log");
+        let current_remote_path = format!("{current_attempt_remote_path_with_hash}/CURRENT");
+        let log_remote_path = format!("{current_attempt_remote_path_with_hash}/00001.log");
 
         assert!(plan
             .info

@@ -150,15 +150,23 @@ pub struct CheckpointInfo {
     pub metadata: CheckpointMetadata,
     /// App-level S3 bucket namespace under which all checkpoint attempts are stored remotely
     pub s3_key_prefix: String,
+    /// When Some, object file keys use {s3_key_prefix}/{hash}/{topic}/{partition}/{id}/{filename} for S3 partition spread
+    pub hash_prefix: Option<String>,
 }
 
 impl CheckpointInfo {
     /// Create new checkpoint info that wraps in the app-level bucket
-    /// namespace under which all checkpoint attempts are stored remotely
-    pub fn new(metadata: CheckpointMetadata, s3_key_prefix: String) -> Self {
+    /// namespace under which all checkpoint attempts are stored remotely.
+    /// When hash_prefix is Some, get_file_key returns hashed paths for object uploads; metadata path is unchanged.
+    pub fn new(
+        metadata: CheckpointMetadata,
+        s3_key_prefix: String,
+        hash_prefix: Option<String>,
+    ) -> Self {
         Self {
             metadata,
             s3_key_prefix,
+            hash_prefix,
         }
     }
 
@@ -181,7 +189,16 @@ impl CheckpointInfo {
     /// remote paths as of time of original upload attempt, and can be
     /// used directly in import/DR flows.
     pub fn get_file_key(&self, relative_file_path: &str) -> String {
-        format!("{}/{}", self.get_remote_attempt_path(), relative_file_path)
+        match &self.hash_prefix {
+            Some(h) => format!(
+                "{}/{}/{}/{}",
+                self.s3_key_prefix,
+                h,
+                self.metadata.get_attempt_path(),
+                relative_file_path
+            ),
+            None => format!("{}/{}", self.get_remote_attempt_path(), relative_file_path),
+        }
     }
 
     // The fully qualified remote base path for this checkpoint attempt
@@ -402,7 +419,7 @@ mod tests {
             50,
         );
 
-        let info = CheckpointInfo::new(metadata, bucket_namespace.to_string());
+        let info = CheckpointInfo::new(metadata, bucket_namespace.to_string(), None);
 
         assert_eq!(
             info.get_metadata_key(),
@@ -415,6 +432,42 @@ mod tests {
         assert_eq!(
             info.get_file_key(local_file_relative_path),
             format!("{bucket_namespace}/{topic}/{partition}/{checkpoint_id}/000001.sst")
+        );
+    }
+
+    #[test]
+    fn test_checkpoint_info_with_hash_prefix() {
+        let attempt_timestamp = Utc::now();
+        let bucket_namespace = "checkpoints";
+        let topic = "test-topic";
+        let partition = 0;
+        let checkpoint_id = CheckpointMetadata::generate_id(attempt_timestamp);
+        let metadata = CheckpointMetadata::new(
+            topic.to_string(),
+            partition,
+            attempt_timestamp,
+            1234567890,
+            100,
+            50,
+        );
+
+        let info = CheckpointInfo::new(
+            metadata,
+            bucket_namespace.to_string(),
+            Some("a1b2c3d4".to_string()),
+        );
+
+        assert_eq!(
+            info.get_metadata_key(),
+            format!("{bucket_namespace}/{topic}/{partition}/{checkpoint_id}/{METADATA_FILENAME}")
+        );
+        assert!(!info.get_metadata_key().contains("a1b2c3d4"));
+
+        let file_key = info.get_file_key("x.sst");
+        assert!(file_key.contains("a1b2c3d4"));
+        assert_eq!(
+            file_key,
+            format!("{bucket_namespace}/a1b2c3d4/{topic}/{partition}/{checkpoint_id}/x.sst")
         );
     }
 

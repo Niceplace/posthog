@@ -576,13 +576,16 @@ mod tests {
             tokio::fs::create_dir_all(&dest_dir).await?;
 
             // Upload only new files from local file path to local "upload" dir
-            // with remote file path appended, including remote namespace
+            // with remote file path appended, including remote namespace (may include hash prefix)
             let mut uploaded_files = Vec::new();
             for local_file in &plan.files_to_upload {
                 let src_filepath = &local_file.local_path;
                 let dest_filepath = self
                     .export_base_dir
                     .join(plan.info.get_file_key(&local_file.filename));
+                if let Some(parent) = dest_filepath.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
                 tokio::fs::copy(src_filepath, &dest_filepath).await?;
                 uploaded_files.push(dest_filepath.to_string_lossy().to_string());
             }

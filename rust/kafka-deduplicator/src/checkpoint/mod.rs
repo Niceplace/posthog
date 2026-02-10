@@ -3,6 +3,7 @@ pub mod config;
 pub mod downloader;
 pub mod error;
 pub mod export;
+pub mod hash_prefix;
 pub mod import;
 pub mod metadata;
 pub mod planner;
