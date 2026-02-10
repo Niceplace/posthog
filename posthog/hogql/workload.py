@@ -2,7 +2,7 @@ from posthog.hogql import ast
 from posthog.hogql.errors import QueryError
 from posthog.hogql.visitor import TraversingVisitor
 
-from posthog.clickhouse.client.connection import Workload
+from posthog.clickhouse.client.workload import Workload
 
 
 class WorkloadCollector(TraversingVisitor):

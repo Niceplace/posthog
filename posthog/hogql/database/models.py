@@ -9,7 +9,7 @@ from posthog.hogql.base import Expr
 from posthog.hogql.errors import NotImplementedError, ResolutionError
 
 # Import Workload at module level for Pydantic (needed at runtime)
-from posthog.clickhouse.client.connection import Workload
+from posthog.clickhouse.client.workload import Workload
 
 if TYPE_CHECKING:
     from posthog.hogql.ast import LazyJoinType, SelectQuery

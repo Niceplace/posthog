@@ -4,9 +4,10 @@ from posthog.test.base import APIBaseTest, ClickhouseTestMixin
 from clickhouse_driver.errors import ServerException
 
 from posthog.hogql.constants import HogQLGlobalSettings
+from posthog.hogql.errors import QueryError
 from posthog.hogql.query import HOGQL_MAX_BYTES_TO_READ_FOR_LOGS_USER_QUERIES, HogQLQueryExecutor
 
-from posthog.errors import CHQueryErrorTooManyBytes, ExposedCHQueryError, QueryError, wrap_query_error
+from posthog.errors import CHQueryErrorTooManyBytes, ExposedCHQueryError, wrap_query_error
 
 
 class TestLogQuerySettings(ClickhouseTestMixin, APIBaseTest):
