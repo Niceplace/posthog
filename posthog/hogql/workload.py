@@ -8,7 +8,7 @@ from posthog.clickhouse.client.workload import Workload
 class WorkloadCollector(TraversingVisitor):
     """Collects workload requirements from tables in a resolved AST."""
 
-    def __init__(self, *, default_workload: Workload):
+    def __init__(self, *, default_workload: Workload = Workload.DEFAULT):
         self.workloads: set[Workload] = set()
         self.default_workload = default_workload
 
