@@ -219,3 +219,127 @@ class TestComputeFeatureFlagMetrics(BaseTest):
             if sample.name == "posthog_feature_flag_team_flag_count"
         ]
         assert len(flag_count_samples) == 0
+
+    def test_ranks_teams_by_largest_flag_size(self) -> None:
+        org = Organization.objects.create(name="Test Org")
+        team_large = Team.objects.create(organization=org, name="Large Flag Team")
+        team_small = Team.objects.create(organization=org, name="Small Flag Team")
+
+        # Team with small flag
+        FeatureFlag.objects.create(
+            team=team_small,
+            key="small-flag",
+            created_by=self.user,
+            filters={"groups": []},
+        )
+
+        # Team with large flag
+        large_properties = [{"key": f"prop_{i}", "value": f"value_{i}" * 100, "type": "person"} for i in range(50)]
+        FeatureFlag.objects.create(
+            team=team_large,
+            key="large-flag",
+            created_by=self.user,
+            filters={"groups": [{"properties": large_properties}]},
+        )
+
+        compute_feature_flag_metrics()
+
+        # Team with larger flag should be ranked first
+        rank1_size = self.registry.get_sample_value(
+            "posthog_feature_flag_team_largest_flag_bytes",
+            {"rank": "1", "team_id": str(team_large.pk), "team_name": "Large Flag Team"},
+        )
+        assert rank1_size is not None
+        assert rank1_size > 1000
+
+        rank2_size = self.registry.get_sample_value(
+            "posthog_feature_flag_team_largest_flag_bytes",
+            {"rank": "2", "team_id": str(team_small.pk), "team_name": "Small Flag Team"},
+        )
+        assert rank2_size is not None
+        assert rank2_size < rank1_size
+
+    def test_ranks_teams_by_total_flag_size(self) -> None:
+        org = Organization.objects.create(name="Test Org")
+        team_large_total = Team.objects.create(organization=org, name="Large Total Team")
+        team_small_total = Team.objects.create(organization=org, name="Small Total Team")
+
+        # Team with small total (one small flag)
+        FeatureFlag.objects.create(
+            team=team_small_total,
+            key="small-flag",
+            created_by=self.user,
+            filters={"groups": []},
+        )
+
+        # Team with large total (multiple flags with content)
+        for i in range(5):
+            FeatureFlag.objects.create(
+                team=team_large_total,
+                key=f"flag-{i}",
+                created_by=self.user,
+                filters={"groups": [{"properties": [{"key": f"prop_{i}", "value": "x" * 50}]}]},
+            )
+
+        compute_feature_flag_metrics()
+
+        # Team with larger total should be ranked first
+        rank1_total = self.registry.get_sample_value(
+            "posthog_feature_flag_team_total_size_bytes",
+            {"rank": "1", "team_id": str(team_large_total.pk), "team_name": "Large Total Team"},
+        )
+        assert rank1_total is not None
+
+        rank2_total = self.registry.get_sample_value(
+            "posthog_feature_flag_team_total_size_bytes",
+            {"rank": "2", "team_id": str(team_small_total.pk), "team_name": "Small Total Team"},
+        )
+        assert rank2_total is not None
+        assert rank2_total < rank1_total
+
+    def test_limits_to_top_5_for_all_metrics(self) -> None:
+        """Verify all three metrics respect the top-5 limit."""
+        org = Organization.objects.create(name="Test Org")
+
+        # Create 7 teams with varying flag counts and sizes
+        for i in range(7):
+            team = Team.objects.create(organization=org, name=f"Team {i}")
+            # Each team gets (i+1) flags with increasing size
+            for j in range(i + 1):
+                FeatureFlag.objects.create(
+                    team=team,
+                    key=f"flag-{j}",
+                    created_by=self.user,
+                    filters={"groups": [{"properties": [{"key": "x", "value": "y" * (i + 1) * 10}]}]},
+                )
+
+        compute_feature_flag_metrics()
+
+        # Check all three metrics have exactly 5 entries (ranks 1-5)
+        metric_names = [
+            "posthog_feature_flag_team_flag_count",
+            "posthog_feature_flag_team_largest_flag_bytes",
+            "posthog_feature_flag_team_total_size_bytes",
+        ]
+
+        for metric_name in metric_names:
+            for rank in range(1, 6):
+                samples = [
+                    sample
+                    for metric in self.registry.collect()
+                    if hasattr(metric, "samples")
+                    for sample in metric.samples
+                    if sample.name == metric_name and sample.labels.get("rank") == str(rank)
+                ]
+                assert len(samples) == 1, f"Expected 1 sample for {metric_name} rank {rank}, got {len(samples)}"
+
+            # Ranks 6 and 7 should not exist
+            for rank in [6, 7]:
+                samples = [
+                    sample
+                    for metric in self.registry.collect()
+                    if hasattr(metric, "samples")
+                    for sample in metric.samples
+                    if sample.name == metric_name and sample.labels.get("rank") == str(rank)
+                ]
+                assert len(samples) == 0, f"Expected 0 samples for {metric_name} rank {rank}, got {len(samples)}"

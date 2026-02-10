@@ -153,6 +153,16 @@ def cleanup_stale_flags_expiry_tracking_task(self: PushGatewayTask) -> None:
     logger.info("Completed flags expiry tracking cleanup", removed_count=removed_count)
 
 
+def _set_ranked_team_gauge(gauge: Gauge, rows: list[dict], value_key: str) -> None:
+    """Set gauge values for a ranked list of team metrics."""
+    for rank, row in enumerate(rows, start=1):
+        gauge.labels(
+            rank=str(rank),
+            team_id=str(row["team_id"]),
+            team_name=row["team__name"] or "Unknown",
+        ).set(row[value_key] or 0)
+
+
 @shared_task(bind=True, base=PushGatewayTask, ignore_result=True, queue=CeleryQueue.FEATURE_FLAGS_LONG_RUNNING.value)
 def compute_feature_flag_metrics(self: PushGatewayTask) -> None:
     """
@@ -207,26 +217,9 @@ def compute_feature_flag_metrics(self: PushGatewayTask) -> None:
         .order_by("-total_size")[:5]
     )
 
-    for rank, row in enumerate(top_by_count, start=1):
-        flag_count_gauge.labels(
-            rank=str(rank),
-            team_id=str(row["team_id"]),
-            team_name=row["team__name"] or "Unknown",
-        ).set(row["flag_count"])
-
-    for rank, row in enumerate(top_by_largest, start=1):
-        largest_flag_gauge.labels(
-            rank=str(rank),
-            team_id=str(row["team_id"]),
-            team_name=row["team__name"] or "Unknown",
-        ).set(row["largest_flag_size"] or 0)
-
-    for rank, row in enumerate(top_by_total, start=1):
-        total_size_gauge.labels(
-            rank=str(rank),
-            team_id=str(row["team_id"]),
-            team_name=row["team__name"] or "Unknown",
-        ).set(row["total_size"] or 0)
+    _set_ranked_team_gauge(flag_count_gauge, top_by_count, "flag_count")
+    _set_ranked_team_gauge(largest_flag_gauge, top_by_largest, "largest_flag_size")
+    _set_ranked_team_gauge(total_size_gauge, top_by_total, "total_size")
 
     logger.info(
         "Computed feature flag metrics",
