@@ -9528,13 +9528,15 @@ class TestFeatureFlagLimits(APIBaseTest):
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["name"] == "Updated name"
 
-    def test_survey_targeting_flags_do_not_count_toward_limit(self):
+    def test_survey_internal_targeting_flags_do_not_count_toward_limit(self):
         from posthog.models.surveys.survey import Survey
 
         # Create a regular flag
         self._create_flag("regular-flag-1")
 
-        # Create a survey with a targeting flag (simulating what survey creation does)
+        # Create a survey with targeting flags (simulating what survey creation does)
+        # targeting_flag is user-visible and DOES count toward limits
+        # internal_targeting_flag is internal and does NOT count toward limits
         targeting_flag = self._create_flag("survey-targeting-abc123")
         internal_targeting_flag = self._create_flag("survey-targeting-internal-abc123")
 
@@ -9548,9 +9550,12 @@ class TestFeatureFlagLimits(APIBaseTest):
             internal_targeting_flag=internal_targeting_flag,
         )
 
-        # With limit of 2, we have 1 regular flag + 2 survey flags = 3 total
-        # But survey flags shouldn't count, so we should be able to create 1 more
-        with self.settings(MAX_FEATURE_FLAGS_PER_TEAM=2):
+        # With limit of 3, we have:
+        # - 1 regular flag (counts)
+        # - 1 targeting_flag (counts - user-visible)
+        # - 1 internal_targeting_flag (excluded - internal)
+        # = 2 counting toward limit, so we should be able to create 1 more
+        with self.settings(MAX_FEATURE_FLAGS_PER_TEAM=3):
             response = self.client.post(
                 f"/api/projects/{self.team.id}/feature_flags",
                 {
@@ -9590,15 +9595,17 @@ class TestFeatureFlagLimits(APIBaseTest):
 
         assert response.status_code == status.HTTP_201_CREATED
 
-    def test_survey_targeting_flags_do_not_count_toward_total_size_limit(self):
+    def test_survey_internal_targeting_flags_do_not_count_toward_total_size_limit(self):
         from posthog.models.surveys.survey import Survey
 
-        # Create a survey with a large targeting flag
+        # Create a survey with a large internal targeting flag
+        # Note: targeting_flag is user-visible and DOES count toward limits
+        # Only internal_targeting_flag is excluded from limits
         properties_large = [
             {"key": f"prop_{i}", "type": "person", "value": f"value_{i}", "operator": "exact"} for i in range(30)
         ]
-        targeting_flag = self._create_flag(
-            "survey-targeting-abc123",
+        internal_targeting_flag = self._create_flag(
+            "survey-targeting-internal-abc123",
             filters={"groups": [{"rollout_percentage": 100, "properties": properties_large}]},
         )
 
@@ -9608,10 +9615,10 @@ class TestFeatureFlagLimits(APIBaseTest):
             name="Test Survey",
             type="popover",
             questions=[{"type": "open", "question": "Test?"}],
-            targeting_flag=targeting_flag,
+            internal_targeting_flag=internal_targeting_flag,
         )
 
-        # The survey flag is large (~2.5KB), but it shouldn't count toward the limit
+        # The internal survey flag is large (~2.5KB), but it shouldn't count toward the limit
         # So we should be able to create another large flag
         with self.settings(MAX_FEATURE_FLAG_TOTAL_FILTERS_BYTES=3000):
             response = self.client.post(

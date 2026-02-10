@@ -277,12 +277,13 @@ class Survey(FileSystemSyncMixin, RootTeamMixin, UUIDTModel):
         """
         Get IDs of all internally-managed survey flags.
 
-        These flags (targeting_flag, internal_targeting_flag, internal_response_sampling_flag)
+        These flags (internal_targeting_flag, internal_response_sampling_flag)
         are auto-generated for surveys and use operators not supported by local evaluation.
         They should be excluded from certain operations like local evaluation and flag lists.
         See GitHub issue #43631.
 
-        Note: The user-created `linked_flag` is NOT included since it's user-managed.
+        Note: The user-created `linked_flag` and user-visible `targeting_flag` are NOT
+        included since they are user-managed/visible.
 
         Args:
             team_id: Filter by team ID (use for team-scoped queries)
@@ -302,7 +303,6 @@ class Survey(FileSystemSyncMixin, RootTeamMixin, UUIDTModel):
         return {
             flag_id
             for row in queryset.values_list(
-                "targeting_flag_id",
                 "internal_targeting_flag_id",
                 "internal_response_sampling_flag_id",
             )
