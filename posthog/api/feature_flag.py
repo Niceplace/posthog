@@ -9,8 +9,8 @@ from typing import Any, Optional, cast
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Prefetch, Q, QuerySet, Sum, TextField, deletion
-from django.db.models.functions import Cast, Length
+from django.db.models import Count, Func, IntegerField, Prefetch, Q, QuerySet, Sum, TextField, deletion
+from django.db.models.functions import Cast
 
 import posthoganalytics
 from drf_spectacular.types import OpenApiTypes
@@ -85,6 +85,14 @@ from posthog.rbac.user_access_control import UserAccessControlSerializerMixin
 from posthog.settings.feature_flags import LOCAL_EVAL_RATE_LIMITS, REMOTE_CONFIG_RATE_LIMITS
 
 from products.product_tours.backend.models import ProductTour
+
+
+class OctetLength(Func):
+    """Returns the byte length of a text field using PostgreSQL's OCTET_LENGTH."""
+
+    function = "OCTET_LENGTH"
+    output_field = IntegerField()
+
 
 BEHAVIOURAL_COHORT_FOUND_ERROR_CODE = "behavioral_cohort_found"
 
@@ -177,7 +185,8 @@ def check_flag_limits_for_team(
         queryset = queryset.exclude(id__in=internal_flag_ids)
 
     # Get both count and total filter size in a single query.
-    result = queryset.annotate(filter_size=Length(Cast("filters", TextField()))).aggregate(
+    # We cast JSONB to text first since OctetLength doesn't work directly on JSONB.
+    result = queryset.annotate(filter_size=OctetLength(Cast("filters", TextField()))).aggregate(
         flag_count=Count("id"),
         total_filter_size=Sum("filter_size"),
     )
@@ -675,11 +684,8 @@ class FeatureFlagSerializer(
             queryset = queryset.exclude(id__in=internal_flag_ids)
 
         # Get both count and total filter size in a single query.
-        # We cast JSONB to text first since Length doesn't work directly on JSONB.
-        # Note: Length returns characters, not bytes, but for JSON with mostly ASCII
-        # this is a close approximation. For exact byte counting we'd need to fetch all
-        # filters and encode them, which is expensive.
-        result = queryset.annotate(filter_size=Length(Cast("filters", TextField()))).aggregate(
+        # We cast JSONB to text first since OctetLength doesn't work directly on JSONB.
+        result = queryset.annotate(filter_size=OctetLength(Cast("filters", TextField()))).aggregate(
             flag_count=Count("id"),
             total_filter_size=Sum("filter_size"),
         )
