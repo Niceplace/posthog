@@ -143,7 +143,9 @@ export const alertFormLogic = kea<alertFormLogicType>([
                 }
 
                 const createPendingNotifications = async (alertId: string): Promise<boolean> => {
-                    const notifLogic = alertNotificationLogic({ alertId })
+                    // Use props.alert?.id (not alertId) to match the logic instance where notifications were queued.
+                    // For new alerts this is undefined (key 'new'), for existing alerts it matches the edit key.
+                    const notifLogic = alertNotificationLogic({ alertId: props.alert?.id })
                     if (notifLogic.values.pendingNotifications.length === 0) {
                         return true
                     }
