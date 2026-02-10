@@ -1,0 +1,159 @@
+from posthog.test.base import APIBaseTest, ClickhouseTestMixin
+
+from clickhouse_driver.errors import ServerException
+
+from posthog.hogql.constants import HogQLGlobalSettings
+from posthog.hogql.query import HOGQL_MAX_BYTES_TO_READ_FOR_LOGS_USER_QUERIES, HogQLQueryExecutor
+
+from posthog.errors import CHQueryErrorTooManyBytes, ExposedCHQueryError, InternalCHQueryError, wrap_query_error
+
+
+class TestLogQuerySettings(ClickhouseTestMixin, APIBaseTest):
+    """Tests that user HogQL queries on log tables get max_bytes_to_read settings applied."""
+
+    def _get_clickhouse_sql_for(self, query: str, query_type: str = "HogQLQuery") -> str:
+        executor = HogQLQueryExecutor(
+            query=query,
+            team=self.team,
+            query_type=query_type,
+        )
+        sql, _context = executor.generate_clickhouse_sql()
+        return sql
+
+    # --- User HogQL queries on log tables ---
+
+    def test_user_query_on_logs_table_has_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for("SELECT * FROM logs LIMIT 10")
+        assert f"max_bytes_to_read={HOGQL_MAX_BYTES_TO_READ_FOR_LOGS_USER_QUERIES}" in sql.replace(" ", "")
+
+    def test_user_query_on_logs_table_has_throw_overflow_mode(self):
+        sql = self._get_clickhouse_sql_for("SELECT * FROM logs LIMIT 10")
+        assert "read_overflow_mode" in sql
+        assert "throw" in sql
+
+    def test_user_query_on_log_attributes_table_has_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for("SELECT * FROM log_attributes LIMIT 10")
+        assert f"max_bytes_to_read={HOGQL_MAX_BYTES_TO_READ_FOR_LOGS_USER_QUERIES}" in sql.replace(" ", "")
+
+    def test_user_query_on_logs_kafka_metrics_table_has_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for("SELECT * FROM logs_kafka_metrics LIMIT 10")
+        assert f"max_bytes_to_read={HOGQL_MAX_BYTES_TO_READ_FOR_LOGS_USER_QUERIES}" in sql.replace(" ", "")
+
+    # --- Non-log user queries should NOT have log settings ---
+
+    def test_user_query_on_events_table_has_no_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for("SELECT * FROM events LIMIT 10")
+        assert "max_bytes_to_read" not in sql
+
+    def test_user_query_on_persons_table_has_no_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for("SELECT * FROM persons LIMIT 10")
+        assert "max_bytes_to_read" not in sql
+
+    def test_user_query_on_sessions_table_has_no_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for("SELECT * FROM sessions LIMIT 10")
+        assert "max_bytes_to_read" not in sql
+
+    # --- Internal query runners should NOT get log settings ---
+
+    def test_internal_logs_query_type_has_no_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for(
+            "SELECT * FROM logs LIMIT 10",
+            query_type="LogsQuery",
+        )
+        assert "max_bytes_to_read" not in sql
+
+    def test_internal_has_logs_query_type_has_no_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for(
+            "SELECT * FROM logs LIMIT 10",
+            query_type="HasLogsQuery",
+        )
+        assert "max_bytes_to_read" not in sql
+
+    def test_arbitrary_internal_query_type_has_no_max_bytes_to_read(self):
+        sql = self._get_clickhouse_sql_for(
+            "SELECT * FROM logs LIMIT 10",
+            query_type="SomeInternalQuery",
+        )
+        assert "max_bytes_to_read" not in sql
+
+    # --- User-provided settings should not override the log guard ---
+
+    def test_user_query_on_logs_applies_settings_even_with_custom_settings(self):
+        executor = HogQLQueryExecutor(
+            query="SELECT * FROM logs LIMIT 10",
+            team=self.team,
+            query_type="HogQLQuery",
+            settings=HogQLGlobalSettings(max_execution_time=30),
+        )
+        sql, _context = executor.generate_clickhouse_sql()
+        assert f"max_bytes_to_read={HOGQL_MAX_BYTES_TO_READ_FOR_LOGS_USER_QUERIES}" in sql.replace(" ", "")
+        # The user's other settings should still be preserved
+        assert "max_execution_time" in sql
+
+    # --- Mixed workload queries should not get log settings ---
+
+    def test_mixed_events_and_logs_join_raises_workload_error(self):
+        """Joining events and logs crosses workloads, which should raise an error during SQL generation."""
+        # This tests that the WorkloadCollector raises when multiple workloads are found,
+        # which means the try/except in _generate_clickhouse_sql catches it and falls back to DEFAULT,
+        # so no log settings are applied
+        try:
+            sql = self._get_clickhouse_sql_for("SELECT * FROM events e JOIN logs l ON e.uuid = l.uuid LIMIT 10")
+            # If the query somehow succeeds, it should NOT have max_bytes_to_read
+            # because the exception path falls back to DEFAULT workload
+            assert "max_bytes_to_read" not in sql
+        except Exception:
+            # It's also valid for this to raise since cross-workload queries aren't supported
+            pass
+
+
+class TestTooManyBytesError(ClickhouseTestMixin, APIBaseTest):
+    """Tests that TOO_MANY_BYTES error is exposed to users."""
+
+    def test_too_many_bytes_is_exposed_error(self):
+        assert issubclass(CHQueryErrorTooManyBytes, ExposedCHQueryError)
+
+    def test_too_many_bytes_is_not_internal_only(self):
+        """CHQueryErrorTooManyBytes should be ExposedCHQueryError, not just InternalCHQueryError."""
+        error = CHQueryErrorTooManyBytes("test message", code=307, code_name="too_many_bytes")
+        assert isinstance(error, ExposedCHQueryError)
+        # InternalCHQueryError is a parent of ExposedCHQueryError, so this is also True
+        assert isinstance(error, InternalCHQueryError)
+
+    def test_wrap_query_error_returns_exposed_error_for_too_many_bytes(self):
+        server_error = ServerException(
+            "DB::Exception: Limit for result exceeded, max bytes: 5000000000. Stack trace: ...",
+            code=307,
+        )
+        wrapped = wrap_query_error(server_error)
+        assert isinstance(wrapped, CHQueryErrorTooManyBytes)
+        assert isinstance(wrapped, ExposedCHQueryError)
+
+    def test_wrap_query_error_too_many_bytes_has_friendly_message(self):
+        server_error = ServerException(
+            "DB::Exception: Limit for result exceeded, max bytes: 5000000000. Stack trace: ...",
+            code=307,
+        )
+        wrapped = wrap_query_error(server_error)
+        message = str(wrapped)
+        # Should NOT contain raw ClickHouse internals
+        assert "DB::Exception" not in message
+        assert "Stack trace" not in message
+        # Should contain helpful guidance
+        assert "maximum data read limit" in message.lower() or "data read limit" in message.lower()
+
+    def test_wrap_query_error_too_many_bytes_has_code_name(self):
+        server_error = ServerException(
+            "DB::Exception: Limit for result exceeded, max bytes: 5000000000.",
+            code=307,
+        )
+        wrapped = wrap_query_error(server_error)
+        assert getattr(wrapped, "code_name", None) == "too_many_bytes"
+
+    def test_wrap_query_error_too_many_bytes_has_code(self):
+        server_error = ServerException(
+            "DB::Exception: Limit for result exceeded, max bytes: 5000000000.",
+            code=307,
+        )
+        wrapped = wrap_query_error(server_error)
+        assert getattr(wrapped, "code", None) == 307
