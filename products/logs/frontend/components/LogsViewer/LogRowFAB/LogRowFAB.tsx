@@ -1,5 +1,4 @@
 import { useActions, useValues } from 'kea'
-import { useMemo } from 'react'
 
 import {
     IconBrackets,
@@ -46,7 +45,7 @@ export function LogRowFAB({
     const { copyLinkToLog } = useActions(logsViewerLogic)
     const { openLogDetails } = useActions(logDetailsModalLogic)
     const { startScrolling, stopScrolling } = useCellScrollControls({ tabId, cellKey: 'message' })
-    const sessionId = useMemo(() => getSessionIdFromLogAttributes(log.attributes, log.resource_attributes), [log])
+    const sessionId = getSessionIdFromLogAttributes(log.attributes, log.resource_attributes)
 
     return (
         <div
