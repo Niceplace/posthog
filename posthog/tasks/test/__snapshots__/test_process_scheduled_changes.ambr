@@ -759,8 +759,7 @@
 # ---
 # name: TestProcessScheduledChanges.test_schedule_feature_flag_multiple_changes.29
   '''
-  SELECT "posthog_survey"."targeting_flag_id",
-         "posthog_survey"."internal_targeting_flag_id",
+  SELECT "posthog_survey"."internal_targeting_flag_id",
          "posthog_survey"."internal_response_sampling_flag_id"
   FROM "posthog_survey"
   INNER JOIN "posthog_team" ON ("posthog_survey"."team_id" = "posthog_team"."id")
@@ -1651,8 +1650,7 @@
 # ---
 # name: TestProcessScheduledChanges.test_schedule_feature_flag_multiple_changes.6
   '''
-  SELECT "posthog_survey"."targeting_flag_id",
-         "posthog_survey"."internal_targeting_flag_id",
+  SELECT "posthog_survey"."internal_targeting_flag_id",
          "posthog_survey"."internal_response_sampling_flag_id"
   FROM "posthog_survey"
   INNER JOIN "posthog_team" ON ("posthog_survey"."team_id" = "posthog_team"."id")
