@@ -71,6 +71,10 @@ from products.notebooks.backend.api.notebook import NotebookViewSet
 from products.posthog_ai.backend.api import MCPToolsViewSet
 from products.product_tours.backend.api import ProductTourViewSet
 from products.user_interviews.backend.api import UserInterviewViewSet
+from products.visual_review.backend.presentation.views import (
+    RepoViewSet as VisualReviewRepoViewSet,
+    RunViewSet as VisualReviewRunViewSet,
+)
 from products.workflows.backend.api import MessageCategoryViewSet, MessagePreferencesViewSet, MessageTemplatesViewSet
 
 from ee.api.session_summaries import SessionGroupSummaryViewSet
@@ -1053,6 +1057,19 @@ environments_router.register(
     r"user_interviews",
     UserInterviewViewSet,
     "environment_user_interviews",
+    ["team_id"],
+)
+
+environments_router.register(
+    r"visual_review/repos",
+    VisualReviewRepoViewSet,
+    "environment_visual_review_repos",
+    ["team_id"],
+)
+environments_router.register(
+    r"visual_review/runs",
+    VisualReviewRunViewSet,
+    "environment_visual_review_runs",
     ["team_id"],
 )
 
