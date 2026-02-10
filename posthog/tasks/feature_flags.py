@@ -1,8 +1,7 @@
 import time
 
 from django.conf import settings
-from django.db.models import Count, Max, Sum
-from django.db.models.expressions import RawSQL
+from django.db.models import Count, F, Func, IntegerField, Max, Sum
 
 import structlog
 from celery import shared_task
@@ -196,25 +195,25 @@ def compute_feature_flag_metrics(self: PushGatewayTask) -> None:
 
     base_qs = FeatureFlag.objects.filter(deleted=False, active=True)
 
-    # Top 5 by flag count
+    # Top 5 by flag count (secondary sort by team_id for deterministic ordering on ties)
     top_by_count = list(
-        base_qs.values("team_id", "team__name").annotate(flag_count=Count("id")).order_by("-flag_count")[:5]
+        base_qs.values("team_id", "team__name").annotate(flag_count=Count("id")).order_by("-flag_count", "team_id")[:5]
     )
 
     # Top 5 by largest individual flag (using pg_column_size for actual byte size)
     top_by_largest = list(
-        base_qs.annotate(filters_size=RawSQL("pg_column_size(filters)", []))
+        base_qs.annotate(filters_size=Func(F("filters"), function="pg_column_size", output_field=IntegerField()))
         .values("team_id", "team__name")
         .annotate(largest_flag_size=Max("filters_size"))
-        .order_by("-largest_flag_size")[:5]
+        .order_by("-largest_flag_size", "team_id")[:5]
     )
 
     # Top 5 by total flag size
     top_by_total = list(
-        base_qs.annotate(filters_size=RawSQL("pg_column_size(filters)", []))
+        base_qs.annotate(filters_size=Func(F("filters"), function="pg_column_size", output_field=IntegerField()))
         .values("team_id", "team__name")
         .annotate(total_size=Sum("filters_size"))
-        .order_by("-total_size")[:5]
+        .order_by("-total_size", "team_id")[:5]
     )
 
     _set_ranked_team_gauge(flag_count_gauge, top_by_count, "flag_count")
