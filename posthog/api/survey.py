@@ -1,4 +1,5 @@
 import re
+import json
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict, cast
@@ -34,6 +35,7 @@ from posthog.api.feature_flag import (
     BEHAVIOURAL_COHORT_FOUND_ERROR_CODE,
     FeatureFlagSerializer,
     MinimalFeatureFlagSerializer,
+    check_flag_limits_for_team,
 )
 from posthog.api.routing import TeamAndOrgViewSetMixin
 from posthog.api.shared import UserBasicSerializer
@@ -874,6 +876,18 @@ class SurveySerializerCreateUpdateOnly(serializers.ModelSerializer):
     def _create_or_update_targeting_flag(
         self, existing_flag=None, filters=None, name=None, active=False, flag_name_suffix=None
     ):
+        # Check limits upfront ONLY for user-visible targeting flags (no suffix).
+        # Internal flags (with suffix like "-custom" or "-sampling") don't count toward limits,
+        # so we skip the check. This ensures teams at the limit can still create surveys.
+        # Note: We do this outside the context manager to avoid error handling issues.
+        if existing_flag is None and flag_name_suffix is None:
+            filter_size = len(json.dumps(filters).encode("utf-8")) if filters else 0
+            check_flag_limits_for_team(
+                team_id=self.context["team_id"],
+                new_flag_filter_size=filter_size,
+                is_create=True,
+            )
+
         with create_flag_with_survey_errors():
             # Ensure the request method is set correctly for validation
             if existing_flag:
@@ -888,6 +902,7 @@ class SurveySerializerCreateUpdateOnly(serializers.ModelSerializer):
                 return existing_flag_serializer.save()
             else:
                 self.context["request"].method = "POST"
+
                 random_id = generate("1234567890abcdef", 10)
                 feature_flag_key = slugify(f"{SURVEY_TARGETING_FLAG_PREFIX}{random_id}{flag_name_suffix or ''}")
                 feature_flag_serializer = FeatureFlagSerializer(

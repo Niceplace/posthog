@@ -2584,7 +2584,8 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
             format="json",
         ).json()
 
-        with self.assertNumQueries(FuzzyInt(19, 20)):
+        # +2 queries for internal flag exclusion: surveys and product tours
+        with self.assertNumQueries(FuzzyInt(21, 22)):
             response = self.client.get(f"/api/projects/{self.team.id}/feature_flags")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -2599,7 +2600,8 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
                 format="json",
             ).json()
 
-        with self.assertNumQueries(FuzzyInt(19, 20)):
+        # Query count should stay constant regardless of flag count (no N+1)
+        with self.assertNumQueries(FuzzyInt(21, 22)):
             response = self.client.get(f"/api/projects/{self.team.id}/feature_flags")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -2623,7 +2625,8 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
             name="Flag role access",
         )
 
-        with self.assertNumQueries(FuzzyInt(19, 20)):
+        # +2 queries for internal flag exclusion: surveys and product tours
+        with self.assertNumQueries(FuzzyInt(21, 22)):
             response = self.client.get(f"/api/projects/{self.team.id}/feature_flags")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertEqual(len(response.json()["results"]), 2)
@@ -2662,9 +2665,8 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
             )
 
         # Capture query count with 5 flags
-        # With the fix, this should be ~18-20 queries
-        # Without the fix, this was ~24 queries (base queries + N+1 for surveys)
-        with self.assertNumQueries(FuzzyInt(17, 22)):
+        # +2 queries for internal flag exclusion: surveys and product tours
+        with self.assertNumQueries(FuzzyInt(19, 24)):
             response = self.client.get(f"/api/projects/{self.team.id}/feature_flags")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertEqual(len(response.json()["results"]), 5)
@@ -2688,10 +2690,8 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
             )
 
         # Query count should remain similar (not scale linearly with flag count)
-        # With the fix: Should stay at ~18-22 queries (constant, regardless of flag count!)
-        # Without the fix: This was ~48 queries (18 base + 30 N+1 queries)
-        # The fix reduced 48 queries down to ~20 queries - a 60% reduction!
-        with self.assertNumQueries(FuzzyInt(17, 24)):
+        # +2 queries for internal flag exclusion: surveys and product tours
+        with self.assertNumQueries(FuzzyInt(19, 26)):
             response = self.client.get(f"/api/projects/{self.team.id}/feature_flags")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertEqual(len(response.json()["results"]), 30)
@@ -2742,15 +2742,17 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
         )
 
         # Should not cause extra queries for the targeting flags
-        with self.assertNumQueries(FuzzyInt(15, 22)):
+        # +2 queries for internal flag exclusion: surveys and product tours
+        with self.assertNumQueries(FuzzyInt(23, 25)):
             response = self.client.get(f"/api/projects/{self.team.id}/feature_flags")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            # Should include main_flag but not targeting flags (they're filtered out)
+            # Should include main_flag and targeting_flag (user-visible)
+            # Only internal_targeting_flag is hidden
             results = response.json()["results"]
             result_keys = [r["key"] for r in results]
             self.assertIn("main_flag", result_keys)
-            # targeting_flag and internal_targeting_flag should be excluded
-            # (they're survey-specific and filtered out from the main list)
+            self.assertIn("targeting_flag", result_keys)  # User-visible, shown
+            self.assertNotIn("internal_targeting_flag", result_keys)  # Internal, hidden
 
     @patch("posthog.api.feature_flag.report_user_action")
     def test_create_feature_flag_usage_dashboard(self, mock_capture):
@@ -4581,7 +4583,8 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
 
         self.assertEqual(len(feature_flag["rollback_conditions"]), 1)
 
-    def test_get_flags_dont_return_survey_targeting_flags(self):
+    def test_get_flags_returns_survey_targeting_flag_but_hides_internal_flags(self):
+        """User-visible targeting_flag is shown, but internal flags are hidden."""
         FeatureFlag.objects.create(team=self.team, created_by=self.user, key="red_button")
         survey = self.client.post(
             f"/api/projects/{self.team.id}/surveys/",
@@ -4614,12 +4617,20 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
             },
             format="json",
         )
-        assert FeatureFlag.objects.filter(id=survey.json()["targeting_flag"]["id"]).exists()
+        survey_data = survey.json()
+        assert FeatureFlag.objects.filter(id=survey_data["targeting_flag"]["id"]).exists()
+
+        # Survey creation also creates an internal_targeting_flag which should be hidden
+        assert survey_data["internal_targeting_flag"] is not None
 
         flags_list = self.client.get(f"/api/projects/@current/feature_flags")
         response = flags_list.json()
-        assert len(response["results"]) == 1
-        assert response["results"][0]["id"] is not survey.json()["targeting_flag"]["id"]
+        # Should have 2 flags: red_button + targeting_flag (user-visible)
+        # internal_targeting_flag should be hidden
+        assert len(response["results"]) == 2
+        result_keys = {r["key"] for r in response["results"]}
+        assert "red_button" in result_keys
+        assert survey_data["targeting_flag"]["key"] in result_keys
 
     def test_get_flags_dont_return_product_tour_internal_targeting_flags(self):
         FeatureFlag.objects.create(team=self.team, created_by=self.user, key="red_button")
@@ -9630,3 +9641,77 @@ class TestFeatureFlagLimits(APIBaseTest):
             )
 
         assert response.status_code == status.HTTP_201_CREATED
+
+    def test_team_at_limit_can_create_survey_without_user_visible_targeting_flag(self):
+        """Teams at the flag limit can create surveys that only have internal targeting flags."""
+        # Fill up to the limit
+        self._create_flag("flag-1")
+        self._create_flag("flag-2")
+
+        with self.settings(MAX_FEATURE_FLAGS_PER_TEAM=2):
+            # Create a survey WITHOUT targeting_flag_filters - only internal_targeting_flag is created
+            response = self.client.post(
+                f"/api/projects/{self.team.id}/surveys",
+                {
+                    "name": "Test Survey",
+                    "type": "popover",
+                    "questions": [{"type": "open", "question": "Test?"}],
+                },
+                format="json",
+            )
+
+        # Should succeed because internal_targeting_flag doesn't count toward the limit
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json()["name"] == "Test Survey"
+
+    def test_team_at_limit_cannot_create_survey_with_user_visible_targeting_flag(self):
+        """Teams at the flag limit cannot create surveys with user-visible targeting_flag_filters."""
+        # Fill up to the limit
+        self._create_flag("flag-1")
+        self._create_flag("flag-2")
+
+        with self.settings(MAX_FEATURE_FLAGS_PER_TEAM=2):
+            # Create a survey WITH targeting_flag_filters - this creates a user-visible targeting_flag
+            response = self.client.post(
+                f"/api/projects/{self.team.id}/surveys",
+                {
+                    "name": "Test Survey",
+                    "type": "popover",
+                    "questions": [{"type": "open", "question": "Test?"}],
+                    "targeting_flag_filters": {
+                        "groups": [
+                            {
+                                "rollout_percentage": 50,
+                                "properties": [{"key": "email", "type": "person", "value": "test@example.com"}],
+                            }
+                        ]
+                    },
+                },
+                format="json",
+            )
+
+        # Should fail because targeting_flag (user-visible) counts toward the limit
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Maximum of 2 feature flags allowed per team" in str(response.json())
+
+    def test_team_at_limit_can_create_product_tour(self):
+        """Teams at the flag limit can create product tours since their flags are internal."""
+        # Fill up to the limit
+        self._create_flag("flag-1")
+        self._create_flag("flag-2")
+
+        with self.settings(MAX_FEATURE_FLAGS_PER_TEAM=2):
+            # Create a product tour with auto_launch enabled (creates internal_targeting_flag)
+            response = self.client.post(
+                f"/api/projects/{self.team.id}/product_tours",
+                {
+                    "name": "Test Product Tour",
+                    "auto_launch": True,
+                    "content": {"steps": []},
+                },
+                format="json",
+            )
+
+        # Should succeed because product tour internal_targeting_flag doesn't count toward the limit
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json()["name"] == "Test Product Tour"

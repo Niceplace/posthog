@@ -145,6 +145,67 @@ def get_internal_targeting_flag_ids(
     return survey_flag_ids | product_tour_flag_ids
 
 
+def check_flag_limits_for_team(
+    team_id: int,
+    new_flag_filter_size: int = 0,
+    is_create: bool = True,
+    exclude_flag_id: int | None = None,
+) -> None:
+    """
+    Check if creating/updating a flag would exceed team limits.
+    Call this BEFORE creating a flag to avoid partial state on failure.
+
+    This is a standalone function that can be called from survey/product tour
+    serializers before they create internal targeting flags.
+
+    Args:
+        team_id: The team ID to check limits for
+        new_flag_filter_size: Size of the new flag's filters in bytes
+        is_create: True if creating a new flag, False if updating existing
+        exclude_flag_id: Flag ID to exclude from calculations (for updates)
+
+    Raises:
+        serializers.ValidationError if limits would be exceeded
+    """
+    queryset = FeatureFlag.objects.filter(team_id=team_id, deleted=False)
+    if exclude_flag_id is not None:
+        queryset = queryset.exclude(id=exclude_flag_id)
+
+    # Exclude internal targeting flags (surveys and product tours) from limit calculations
+    internal_flag_ids = get_internal_targeting_flag_ids(team_id=team_id)
+    if internal_flag_ids:
+        queryset = queryset.exclude(id__in=internal_flag_ids)
+
+    # Get both count and total filter size in a single query.
+    result = queryset.annotate(filter_size=Length(Cast("filters", TextField()))).aggregate(
+        flag_count=Count("id"),
+        total_filter_size=Sum("filter_size"),
+    )
+
+    flag_count = result["flag_count"] or 0
+    current_total = result["total_filter_size"] or 0
+
+    # Check flag count limit (only on create)
+    if is_create:
+        count_limit = settings.MAX_FEATURE_FLAGS_PER_TEAM
+        if flag_count >= count_limit:
+            raise serializers.ValidationError(
+                f"Maximum of {count_limit:,} feature flags allowed per team. "
+                f"Please delete unused flags or contact support to increase this limit."
+            )
+
+    # Check total filter size limit
+    size_limit = settings.MAX_FEATURE_FLAG_TOTAL_FILTERS_BYTES
+    new_total = current_total + new_flag_filter_size
+    if new_total > size_limit:
+        limit_mb = size_limit / (1024 * 1024)
+        raise serializers.ValidationError(
+            f"Total feature flag filters for this team would exceed {limit_mb:.1f}MB limit. "
+            f"Current: {current_total // 1024}KB, this flag: {new_flag_filter_size // 1024}KB. "
+            f"Please simplify existing flags or contact support."
+        )
+
+
 def extract_etag_from_header(header_value: str | None) -> str | None:
     """
     Extract ETag value from an If-None-Match header.
@@ -809,8 +870,12 @@ class FeatureFlagSerializer(
                 f"Please simplify conditions or reduce payload sizes."
             )
 
-        # Validate flag count (on create) and total filters size for the team
-        self._validate_flag_limits(filter_size)
+        # Skip team-wide limit validation for internal flags created by surveys/product tours.
+        # These serializers validate limits upfront before calling FeatureFlagSerializer,
+        # which ensures we don't leave partial state (survey without its targeting flag).
+        creation_context = self.initial_data.get("creation_context")
+        if creation_context not in ("surveys", "product_tours"):
+            self._validate_flag_limits(filter_size)
 
         return filters
 
