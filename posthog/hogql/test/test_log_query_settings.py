@@ -7,7 +7,7 @@ from posthog.hogql.constants import HogQLGlobalSettings
 from posthog.hogql.errors import QueryError
 from posthog.hogql.query import HOGQL_MAX_BYTES_TO_READ_FOR_LOGS_USER_QUERIES, HogQLQueryExecutor
 
-from posthog.errors import CHQueryErrorTooManyBytes, ExposedCHQueryError, wrap_query_error
+from posthog.errors import CHQueryErrorTooManyBytes, ExposedCHQueryError, wrap_clickhouse_query_error
 
 
 class TestLogQuerySettings(ClickhouseTestMixin, APIBaseTest):
@@ -88,21 +88,21 @@ class TestLogQuerySettings(ClickhouseTestMixin, APIBaseTest):
 class TestTooManyBytesError(ClickhouseTestMixin, APIBaseTest):
     """Tests that TOO_MANY_BYTES error is exposed to users."""
 
-    def test_wrap_query_error_returns_exposed_error_for_too_many_bytes(self):
+    def test_wrap_clickhouse_query_error_returns_exposed_error_for_too_many_bytes(self):
         server_error = ServerException(
             "DB::Exception: Limit for result exceeded, max bytes: 5000000000. Stack trace: ...",
             code=307,
         )
-        wrapped = wrap_query_error(server_error)
+        wrapped = wrap_clickhouse_query_error(server_error)
         assert isinstance(wrapped, CHQueryErrorTooManyBytes)
         assert isinstance(wrapped, ExposedCHQueryError)
 
-    def test_wrap_query_error_too_many_bytes_has_friendly_message(self):
+    def test_wrap_clickhouse_query_error_too_many_bytes_has_friendly_message(self):
         server_error = ServerException(
             "DB::Exception: Limit for result exceeded, max bytes: 5000000000. Stack trace: ...",
             code=307,
         )
-        wrapped = wrap_query_error(server_error)
+        wrapped = wrap_clickhouse_query_error(server_error)
         message = str(wrapped)
         # Should NOT contain raw ClickHouse internals
         assert "DB::Exception" not in message
@@ -110,10 +110,10 @@ class TestTooManyBytesError(ClickhouseTestMixin, APIBaseTest):
 
         assert "maximum data read limit" in message.lower() or "data read limit" in message.lower()
 
-    def test_wrap_query_error_too_many_bytes_has_code_name(self):
+    def test_wrap_clickhouse_query_error_too_many_bytes_has_code_name(self):
         server_error = ServerException(
             "DB::Exception: Limit for result exceeded, max bytes: 5000000000.",
             code=307,
         )
-        wrapped = wrap_query_error(server_error)
+        wrapped = wrap_clickhouse_query_error(server_error)
         assert getattr(wrapped, "code_name", None) == "too_many_bytes"
