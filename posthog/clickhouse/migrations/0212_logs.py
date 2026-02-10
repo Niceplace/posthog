@@ -1,12 +1,10 @@
-from django.conf import settings
-
 from posthog.clickhouse.client.connection import NodeRole
 from posthog.clickhouse.client.migration_tools import run_sql_with_exceptions
-from posthog.clickhouse.logs.logs32 import TABLE_NAME
+from posthog.clickhouse.logs import LOGS_DISTRIBUTED_TABLE_SQL
 
 operations = [
     run_sql_with_exceptions(
-        f"create TABLE if not exists {settings.CLICKHOUSE_LOGS_CLUSTER_DATABASE}.logs AS {settings.CLICKHOUSE_LOGS_CLUSTER_DATABASE}.{TABLE_NAME} ENGINE = Distributed('posthog', {settings.CLICKHOUSE_LOGS_CLUSTER_DATABASE}, '{TABLE_NAME}');",
+        LOGS_DISTRIBUTED_TABLE_SQL,
         node_roles=[NodeRole.LOGS],
     ),
 ]
