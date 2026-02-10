@@ -157,24 +157,20 @@ export const alertFormLogic = kea<alertFormLogicType>([
                     if (alert.id === undefined) {
                         const updatedAlert: AlertType = await api.alerts.create(payload)
 
-                        const allNotificationsCreated = await createPendingNotifications(updatedAlert.id)
+                        await createPendingNotifications(updatedAlert.id)
                         lemonToast.success(`Alert created.`)
                         upsertToParent(updatedAlert)
-                        if (allNotificationsCreated) {
-                            props.onEditSuccess(updatedAlert.id)
-                        }
+                        props.onEditSuccess(updatedAlert.id)
 
                         return updatedAlert
                     }
 
                     const updatedAlert: AlertType = await api.alerts.update(alert.id, payload)
 
-                    const allNotificationsCreated = await createPendingNotifications(updatedAlert.id)
+                    await createPendingNotifications(updatedAlert.id)
                     lemonToast.success(`Alert saved.`)
                     upsertToParent(updatedAlert)
-                    if (allNotificationsCreated) {
-                        props.onEditSuccess(updatedAlert.id)
-                    }
+                    props.onEditSuccess(updatedAlert.id)
 
                     return updatedAlert
                 } catch (error: any) {

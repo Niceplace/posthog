@@ -54,14 +54,14 @@ export function InlineAlertNotifications({ alertId }: InlineAlertNotificationsPr
 
     const handleAdd = (): void => {
         if (selectedType === ALERT_NOTIFICATION_TYPE_SLACK) {
-            if (!slackChannelValue) {
+            if (!slackChannelValue || !firstSlackIntegration) {
                 return
             }
             const channelName = slackChannelValue.split('|')[1]?.replace('#', '') ?? slackChannelValue
 
             const notification: PendingAlertNotification = {
                 type: ALERT_NOTIFICATION_TYPE_SLACK,
-                slackWorkspaceId: firstSlackIntegration?.id,
+                slackWorkspaceId: firstSlackIntegration.id,
                 slackChannelId: slackChannelValue,
                 slackChannelName: channelName,
             }
