@@ -103,6 +103,47 @@ LOCAL_EVALUATION_ETAG_COUNTER = Counter(
 )
 
 
+def get_internal_targeting_flag_ids(
+    *,
+    team_id: int | None = None,
+    project_id: int | None = None,
+) -> set[int]:
+    """
+    Get IDs of all internally-managed targeting flags that should be excluded from limits and lists.
+
+    These flags are auto-generated for surveys and product tours and should not count toward
+    user-facing limits or appear in the feature flags list UI.
+
+    Args:
+        team_id: Filter by team ID (use for team-scoped queries)
+        project_id: Filter by project ID (use for project-scoped queries)
+
+    Returns:
+        Set of feature flag IDs to exclude
+    """
+    if team_id is None and project_id is None:
+        raise ValueError("Either team_id or project_id must be provided")
+
+    # Get survey internal flag IDs
+    survey_flag_ids = Survey.get_internal_flag_ids(team_id=team_id, project_id=project_id)
+
+    # Get product tour internal targeting flag IDs
+    if team_id is not None:
+        product_tour_flag_ids = set(
+            ProductTour.all_objects.filter(team_id=team_id, internal_targeting_flag__isnull=False).values_list(
+                "internal_targeting_flag_id", flat=True
+            )
+        )
+    else:
+        product_tour_flag_ids = set(
+            ProductTour.all_objects.filter(
+                team__project_id=project_id, internal_targeting_flag__isnull=False
+            ).values_list("internal_targeting_flag_id", flat=True)
+        )
+
+    return survey_flag_ids | product_tour_flag_ids
+
+
 def extract_etag_from_header(header_value: str | None) -> str | None:
     """
     Extract ETag value from an If-None-Match header.
@@ -554,14 +595,22 @@ class FeatureFlagSerializer(
 
         For new flags: checks both count limit and total size limit.
         For updates: checks only total size limit (excluding self from calculation).
+
+        Internal targeting flags (for surveys and product tours) are excluded from limits
+        since they are auto-generated and should not count toward user-facing limits.
         """
         team_id = self.context["team_id"]
         is_create = self.instance is None
 
-        # Build queryset, excluding current flag if updating
+        # Build queryset, excluding current flag if updating and excluding internal targeting flags
         queryset = FeatureFlag.objects.filter(team_id=team_id, deleted=False)
         if self.instance is not None:
             queryset = queryset.exclude(id=self.instance.id)
+
+        # Exclude internal targeting flags (surveys and product tours) from limit calculations
+        internal_flag_ids = get_internal_targeting_flag_ids(team_id=team_id)
+        if internal_flag_ids:
+            queryset = queryset.exclude(id__in=internal_flag_ids)
 
         # Get both count and total filter size in a single query.
         # We cast JSONB to text first since Length doesn't work directly on JSONB.
@@ -1615,13 +1664,10 @@ class FeatureFlagViewSet(
                 )
             )
 
-            survey_flag_ids = Survey.get_internal_flag_ids(project_id=self.project_id)
-            product_tour_internal_targeting_flags = ProductTour.all_objects.filter(
-                team__project_id=self.project_id, internal_targeting_flag__isnull=False
-            ).values_list("internal_targeting_flag_id", flat=True)
-            queryset = queryset.exclude(Q(id__in=survey_flag_ids)).exclude(
-                Q(id__in=product_tour_internal_targeting_flags)
-            )
+            # Exclude internal targeting flags (surveys and product tours) from the list
+            internal_flag_ids = get_internal_targeting_flag_ids(project_id=self.project_id)
+            if internal_flag_ids:
+                queryset = queryset.exclude(id__in=internal_flag_ids)
 
             # add additional filters provided by the client
             queryset = self._filter_request(self.request, queryset)
