@@ -74,10 +74,10 @@ TEAM_METADATA_CACHE_VERIFICATION_GRACE_PERIOD_MINUTES: int = get_from_env(
 # These limits are configurable via environment variables and can be overridden
 # in Helm charts per environment.
 #
-# Based on production data analysis (28,663 teams with flags):
-# - Max flags observed: 1,033 (2,000 gives ~94% headroom)
-# - Max per-flag filter size: 385KB (512KB gives ~33% headroom)
-# - Max total filters per team: 699KB (1.5MB gives ~2x headroom)
+# Based on production data analysis (US: 28,768 teams, EU: 15,519 teams):
+# - Max flags observed: 1,204 (2,000 gives ~66% headroom)
+# - Max per-flag filter size: 376KB (512KB gives ~36% headroom)
+# - Max total filters per team: 702KB (1.5MB gives ~2x headroom)
 
 # Maximum number of feature flags allowed per team
 MAX_FEATURE_FLAGS_PER_TEAM: int = get_from_env("MAX_FEATURE_FLAGS_PER_TEAM", 2000, type_cast=int)
