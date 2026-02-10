@@ -1,1 +1,1 @@
-1002_resource_transfer_idx
+1001_resource_transfer
