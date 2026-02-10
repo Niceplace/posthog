@@ -31,13 +31,17 @@ const INSIGHT_ALERT_SLACK_INPUTS =
     HOG_FUNCTION_SUB_TEMPLATES[INSIGHT_ALERT_FIRING_SUB_TEMPLATE_ID].find((t) => t.template_id === 'template-slack')
         ?.inputs ?? {}
 
-export type PendingAlertNotification = {
-    type: typeof ALERT_NOTIFICATION_TYPE_SLACK | typeof ALERT_NOTIFICATION_TYPE_WEBHOOK
-    slackWorkspaceId?: number
-    slackChannelId?: string
-    slackChannelName?: string
-    webhookUrl?: string
-}
+export type PendingAlertNotification =
+    | {
+          type: typeof ALERT_NOTIFICATION_TYPE_SLACK
+          slackWorkspaceId: number
+          slackChannelId: string
+          slackChannelName?: string
+      }
+    | {
+          type: typeof ALERT_NOTIFICATION_TYPE_WEBHOOK
+          webhookUrl: string
+      }
 
 export function buildHogFunctionPayload(
     alertId: string,
