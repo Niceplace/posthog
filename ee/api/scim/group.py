@@ -247,8 +247,15 @@ class PostHogSCIMGroup(SCIMGroup):
                     user_id = path.params_by_attr_paths.get(("members", "value", None))
                     if user_id:
                         RoleMembership.objects.filter(role=self.obj, user__id=str(user_id)).delete()
+                elif value:
+                    # Simple path with value: remove only specified members
+                    # Entra ID uses this format: {"op": "Remove", "path": "members", "value": [{"value": "user-id"}]}
+                    members_to_remove = value if isinstance(value, list) else [value]
+                    user_ids = [m.get("value") for m in members_to_remove if isinstance(m, dict) and m.get("value")]
+                    if user_ids:
+                        RoleMembership.objects.filter(role=self.obj, user__id__in=user_ids).delete()
                 else:
-                    # Simple path, remove all members
+                    # Bare simple path with no value: remove all members
                     RoleMembership.objects.filter(role=self.obj).delete()
 
     @classmethod
