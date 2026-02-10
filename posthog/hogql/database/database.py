@@ -324,6 +324,7 @@ class Database(BaseModel):
             "groups",
             "persons",
             "sessions",
+            "logs",
             *self.get_system_table_names(),
         ]
 
