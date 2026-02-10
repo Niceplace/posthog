@@ -1458,8 +1458,8 @@ importers:
         specifier: ^10.21.1
         version: 10.21.1
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       lru-cache:
         specifier: ^11.0.0
         version: 11.0.2
@@ -28846,7 +28846,7 @@ snapshots:
       google-libphonenumber: 3.2.40
       kafkajs: 2.2.4
       liquidjs: 10.21.1
-      lodash: 4.17.21
+      lodash: 4.17.23
       lru-cache: 10.4.3
       ssh2-sftp-client: 10.0.3
     transitivePeerDependencies:
@@ -30749,7 +30749,7 @@ snapshots:
       '@babel/traverse': 7.28.0
       '@babel/types': 7.28.1
       javascript-natural-sort: 0.7.1
-      lodash: 4.17.21
+      lodash: 4.17.23
       prettier: 3.6.2
     transitivePeerDependencies:
       - supports-color
