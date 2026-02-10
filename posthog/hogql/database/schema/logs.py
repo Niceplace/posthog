@@ -8,7 +8,7 @@ from posthog.hogql.database.models import (
     Table,
 )
 
-from posthog.clickhouse.client.workload import Workload
+from posthog.clickhouse.workload import Workload
 
 
 class LogsTable(Table):

@@ -6,7 +6,7 @@ from posthog.hogql.database.schema.logs import LogAttributesTable, LogsKafkaMetr
 from posthog.hogql.errors import QueryError
 from posthog.hogql.workload import WorkloadCollector
 
-from posthog.clickhouse.client.workload import Workload
+from posthog.clickhouse.workload import Workload
 
 
 class TestWorkloadCollector:

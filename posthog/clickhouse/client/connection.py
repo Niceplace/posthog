@@ -15,7 +15,7 @@ from clickhouse_connect.driver import (
 from clickhouse_driver import Client as SyncClient
 from clickhouse_pool import ChPool
 
-from posthog.clickhouse.client.workload import Workload
+from posthog.clickhouse.workload import Workload
 from posthog.settings import data_stores
 from posthog.utils import patchable
 
