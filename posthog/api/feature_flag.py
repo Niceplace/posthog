@@ -135,6 +135,7 @@ def get_internal_targeting_flag_ids(
             )
         )
     else:
+        assert project_id is not None  # Guaranteed by validation above
         product_tour_flag_ids = set(
             ProductTour.all_objects.filter(
                 team__project_id=project_id, internal_targeting_flag__isnull=False
