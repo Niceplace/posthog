@@ -43,7 +43,7 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
         clearPendingNotifications: true,
         setPendingNotifications: (notifications: PendingAlertNotification[]) => ({ notifications }),
         deleteExistingHogFunction: (hogFunction: HogFunctionType) => ({ hogFunction }),
-        createPendingHogFunctions: (alertId: string) => ({ alertId }),
+        createPendingHogFunctions: (alertId: string, alertName?: string) => ({ alertId, alertName }),
         setSelectedType: (selectedType: AlertNotificationType) => ({ selectedType }),
         setSlackChannelValue: (slackChannelValue: string | null) => ({ slackChannelValue }),
         setWebhookUrl: (webhookUrl: string) => ({ webhookUrl }),
@@ -129,7 +129,7 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
             })
         },
 
-        createPendingHogFunctions: async ({ alertId }) => {
+        createPendingHogFunctions: async ({ alertId, alertName }) => {
             const pending = values.pendingNotifications
             if (pending.length === 0) {
                 return
@@ -137,7 +137,7 @@ export const alertNotificationLogic = kea<alertNotificationLogicType>([
 
             const results = await Promise.allSettled(
                 pending.map((notification) => {
-                    const payload = buildHogFunctionPayload(alertId, notification)
+                    const payload = buildHogFunctionPayload(alertId, alertName, notification)
                     return api.hogFunctions.create(payload)
                 })
             )

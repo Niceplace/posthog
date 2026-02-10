@@ -149,7 +149,7 @@ export const alertFormLogic = kea<alertFormLogicType>([
                     if (notifLogic.values.pendingNotifications.length === 0) {
                         return true
                     }
-                    await notifLogic.asyncActions.createPendingHogFunctions(alertId)
+                    await notifLogic.asyncActions.createPendingHogFunctions(alertId, alert.name)
                     return notifLogic.values.pendingNotifications.length === 0
                 }
 

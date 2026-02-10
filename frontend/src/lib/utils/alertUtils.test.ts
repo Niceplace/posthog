@@ -29,25 +29,27 @@ describe('alertUtils', () => {
     describe('buildHogFunctionPayload', () => {
         it.each([
             {
-                name: 'slack notification',
+                name: 'slack notification with alert name',
                 notification: {
                     type: 'slack' as const,
                     slackWorkspaceId: 42,
                     slackChannelId: 'C12345|#general',
                     slackChannelName: 'general',
                 },
-                expectedName: 'Alert notification: Slack #general',
+                alertName: 'Daily revenue check',
+                expectedName: 'Daily revenue check: Slack #general',
                 expectedTemplateId: 'template-slack',
                 expectedInputKeys: ['blocks', 'text', 'slack_workspace', 'channel'],
             },
             {
-                name: 'slack notification with missing channel name',
+                name: 'slack notification without alert name',
                 notification: {
                     type: 'slack' as const,
                     slackWorkspaceId: 42,
                     slackChannelId: 'C12345',
                 },
-                expectedName: 'Alert notification: Slack #channel',
+                alertName: undefined,
+                expectedName: 'Alert: Slack #channel',
                 expectedTemplateId: 'template-slack',
                 expectedInputKeys: ['blocks', 'text', 'slack_workspace', 'channel'],
             },
@@ -57,14 +59,15 @@ describe('alertUtils', () => {
                     type: 'webhook' as const,
                     webhookUrl: 'https://example.com/hook',
                 },
-                expectedName: 'Alert notification: Webhook https://example.com/hook',
+                alertName: 'Spike detector',
+                expectedName: 'Spike detector: Webhook https://example.com/hook',
                 expectedTemplateId: 'template-webhook',
                 expectedInputKeys: ['url', 'body'],
             },
         ])(
             'builds correct payload for $name',
-            ({ notification, expectedName, expectedTemplateId, expectedInputKeys }) => {
-                const result = buildHogFunctionPayload('alert-456', notification as PendingAlertNotification)
+            ({ notification, alertName, expectedName, expectedTemplateId, expectedInputKeys }) => {
+                const result = buildHogFunctionPayload('alert-456', alertName, notification as PendingAlertNotification)
 
                 expect(result.name).toBe(expectedName)
                 expect(result.template_id).toBe(expectedTemplateId)
@@ -84,7 +87,7 @@ describe('alertUtils', () => {
                 slackChannelName: 'general',
             }
 
-            const result = buildHogFunctionPayload('alert-789', notification)
+            const result = buildHogFunctionPayload('alert-789', 'My alert', notification)
 
             expect(result.inputs?.slack_workspace).toEqual({ value: 42 })
             expect(result.inputs?.channel).toEqual({ value: 'C12345|#general' })
@@ -96,7 +99,7 @@ describe('alertUtils', () => {
                 webhookUrl: 'https://example.com/hook',
             }
 
-            const result = buildHogFunctionPayload('alert-789', notification)
+            const result = buildHogFunctionPayload('alert-789', 'My alert', notification)
 
             expect(result.inputs?.url).toEqual({ value: 'https://example.com/hook' })
             expect(result.inputs?.body).toEqual({

@@ -41,6 +41,7 @@ export type PendingAlertNotification = {
 
 export function buildHogFunctionPayload(
     alertId: string,
+    alertName: string | undefined,
     notification: PendingAlertNotification
 ): Partial<HogFunctionType> {
     const commonProps = HOG_FUNCTION_SUB_TEMPLATE_COMMON_PROPERTIES[INSIGHT_ALERT_FIRING_SUB_TEMPLATE_ID]
@@ -54,7 +55,7 @@ export function buildHogFunctionPayload(
     if (notification.type === 'slack') {
         return {
             ...base,
-            name: `Alert notification: Slack #${notification.slackChannelName ?? 'channel'}`,
+            name: `${alertName ?? 'Alert'}: Slack #${notification.slackChannelName ?? 'channel'}`,
             template_id: 'template-slack',
             inputs: {
                 ...INSIGHT_ALERT_SLACK_INPUTS,
@@ -66,7 +67,7 @@ export function buildHogFunctionPayload(
 
     return {
         ...base,
-        name: `Alert notification: Webhook ${notification.webhookUrl}`,
+        name: `${alertName ?? 'Alert'}: Webhook ${notification.webhookUrl}`,
         template_id: 'template-webhook',
         inputs: {
             url: { value: notification.webhookUrl },
