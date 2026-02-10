@@ -9,7 +9,8 @@ from typing import Any, Optional, cast
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Prefetch, Q, QuerySet, deletion
+from django.db.models import Count, Prefetch, Q, QuerySet, Sum, TextField, deletion
+from django.db.models.functions import Cast, Length
 
 import posthoganalytics
 from drf_spectacular.types import OpenApiTypes
@@ -547,6 +548,54 @@ class FeatureFlagSerializer(
 
         return value
 
+    def _validate_flag_limits(self, new_filter_size: int) -> None:
+        """
+        Validate flag count and total filter size limits in a single query.
+
+        For new flags: checks both count limit and total size limit.
+        For updates: checks only total size limit (excluding self from calculation).
+        """
+        team_id = self.context["team_id"]
+        is_create = self.instance is None
+
+        # Build queryset, excluding current flag if updating
+        queryset = FeatureFlag.objects.filter(team_id=team_id, deleted=False)
+        if self.instance is not None:
+            queryset = queryset.exclude(id=self.instance.id)
+
+        # Get both count and total filter size in a single query.
+        # We cast JSONB to text first since Length doesn't work directly on JSONB.
+        # Note: Length returns characters, not bytes, but for JSON with mostly ASCII
+        # this is a close approximation. For exact byte counting we'd need to fetch all
+        # filters and encode them, which is expensive.
+        result = queryset.annotate(filter_size=Length(Cast("filters", TextField()))).aggregate(
+            flag_count=Count("id"),
+            total_filter_size=Sum("filter_size"),
+        )
+
+        flag_count = result["flag_count"] or 0
+        current_total = result["total_filter_size"] or 0
+
+        # Check flag count limit (only on create)
+        if is_create:
+            count_limit = settings.MAX_FEATURE_FLAGS_PER_TEAM
+            if flag_count >= count_limit:
+                raise serializers.ValidationError(
+                    f"Maximum of {count_limit:,} feature flags allowed per team. "
+                    f"Please delete unused flags or contact support to increase this limit."
+                )
+
+        # Check total filter size limit
+        size_limit = settings.MAX_FEATURE_FLAG_TOTAL_FILTERS_BYTES
+        new_total = current_total + new_filter_size
+        if new_total > size_limit:
+            limit_mb = size_limit / (1024 * 1024)
+            raise serializers.ValidationError(
+                f"Total feature flag filters for this team would exceed {limit_mb:.1f}MB limit. "
+                f"Current: {current_total // 1024}KB, this flag: {new_filter_size // 1024}KB. "
+                f"Please simplify existing flags or contact support."
+            )
+
     def validate_filters(self, filters):
         # For some weird internal REST framework reason this field gets validated on a partial PATCH call, even if filters isn't being updatd
         # If we see this, just return the current filters
@@ -697,6 +746,21 @@ class FeatureFlagSerializer(
         else:
             if len(payloads) > 1 or any(key != "true" for key in payloads):  # only expect one key
                 raise serializers.ValidationError("Payload keys must be 'true' for boolean flags")
+
+        # Validate per-flag filter size
+        filter_json = json.dumps(filters)
+        filter_size = len(filter_json.encode("utf-8"))
+        per_flag_limit = settings.MAX_FEATURE_FLAG_FILTER_SIZE_BYTES
+
+        if filter_size > per_flag_limit:
+            raise serializers.ValidationError(
+                f"Feature flag filters exceed maximum size of {per_flag_limit // 1024}KB. "
+                f"Current size: {filter_size // 1024}KB. "
+                f"Please simplify conditions or reduce payload sizes."
+            )
+
+        # Validate flag count (on create) and total filters size for the team
+        self._validate_flag_limits(filter_size)
 
         return filters
 
