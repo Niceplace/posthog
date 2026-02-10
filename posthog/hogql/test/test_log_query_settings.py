@@ -108,7 +108,7 @@ class TestTooManyBytesError(ClickhouseTestMixin, APIBaseTest):
         assert "DB::Exception" not in message
         assert "Stack trace" not in message
 
-        assert "maximum data read limit" in message.lower() or "data read limit" in message.lower()
+        assert "limit for result exceeded" in message.lower()
 
     def test_wrap_clickhouse_query_error_too_many_bytes_has_code_name(self):
         server_error = ServerException(
