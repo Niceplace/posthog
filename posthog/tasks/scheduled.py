@@ -16,7 +16,11 @@ from posthog.tasks.alerts.checks import (
     reset_stuck_alerts_task,
 )
 from posthog.tasks.email import send_hog_functions_daily_digest
-from posthog.tasks.feature_flags import cleanup_stale_flags_expiry_tracking_task, refresh_expiring_flags_cache_entries
+from posthog.tasks.feature_flags import (
+    cleanup_stale_flags_expiry_tracking_task,
+    compute_feature_flag_metrics,
+    refresh_expiring_flags_cache_entries,
+)
 from posthog.tasks.hypercache_verification import verify_and_fix_team_metadata_cache_task
 from posthog.tasks.integrations import refresh_integrations
 from posthog.tasks.llm_analytics_usage_report import send_llm_analytics_usage_reports
@@ -193,6 +197,13 @@ def setup_periodic_tasks(sender: Celery, **kwargs: Any) -> None:
         crontab(hour="3", minute="15"),
         cleanup_stale_flags_expiry_tracking_task.s(),
         name="flags cache expiry tracking cleanup",
+    )
+
+    # Feature flag metrics for Grafana dashboards - hourly at minute 30
+    sender.add_periodic_task(
+        crontab(hour="*", minute="30"),
+        compute_feature_flag_metrics.s(),
+        name="compute feature flag metrics",
     )
 
     # HyperCache verification - split into separate tasks for independent time budgets

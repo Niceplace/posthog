@@ -1,11 +1,14 @@
 import time
 
 from django.conf import settings
+from django.db.models import Count, Max, Sum
+from django.db.models.expressions import RawSQL
 
 import structlog
 from celery import shared_task
 from prometheus_client import Gauge
 
+from posthog.models.feature_flag.feature_flag import FeatureFlag
 from posthog.models.feature_flag.flags_cache import (
     cleanup_stale_expiry_tracking,
     get_cache_stats,
@@ -148,3 +151,86 @@ def cleanup_stale_flags_expiry_tracking_task(self: PushGatewayTask) -> None:
     removed_count = cleanup_stale_expiry_tracking()
     entries_cleaned_gauge.set(removed_count)
     logger.info("Completed flags expiry tracking cleanup", removed_count=removed_count)
+
+
+@shared_task(bind=True, base=PushGatewayTask, ignore_result=True, queue=CeleryQueue.FEATURE_FLAGS_LONG_RUNNING.value)
+def compute_feature_flag_metrics(self: PushGatewayTask) -> None:
+    """
+    Compute and push feature flag metrics for Grafana dashboards.
+
+    Metrics:
+    - posthog_feature_flag_team_flag_count: Top 5 teams by active flag count
+    - posthog_feature_flag_team_largest_flag_bytes: Top 5 teams by largest individual flag
+    - posthog_feature_flag_team_total_size_bytes: Top 5 teams by total flag size
+    """
+    flag_count_gauge = Gauge(
+        "posthog_feature_flag_team_flag_count",
+        "Number of active feature flags per team (top 5)",
+        labelnames=["rank", "team_id", "team_name"],
+        registry=self.metrics_registry,
+    )
+
+    largest_flag_gauge = Gauge(
+        "posthog_feature_flag_team_largest_flag_bytes",
+        "Size in bytes of the largest feature flag filter per team (top 5)",
+        labelnames=["rank", "team_id", "team_name"],
+        registry=self.metrics_registry,
+    )
+
+    total_size_gauge = Gauge(
+        "posthog_feature_flag_team_total_size_bytes",
+        "Total size in bytes of all feature flag filters per team (top 5)",
+        labelnames=["rank", "team_id", "team_name"],
+        registry=self.metrics_registry,
+    )
+
+    base_qs = FeatureFlag.objects.filter(deleted=False, active=True)
+
+    # Top 5 by flag count
+    top_by_count = list(
+        base_qs.values("team_id", "team__name").annotate(flag_count=Count("id")).order_by("-flag_count")[:5]
+    )
+
+    # Top 5 by largest individual flag (using pg_column_size for actual byte size)
+    top_by_largest = list(
+        base_qs.annotate(filters_size=RawSQL("pg_column_size(filters)", []))
+        .values("team_id", "team__name")
+        .annotate(largest_flag_size=Max("filters_size"))
+        .order_by("-largest_flag_size")[:5]
+    )
+
+    # Top 5 by total flag size
+    top_by_total = list(
+        base_qs.annotate(filters_size=RawSQL("pg_column_size(filters)", []))
+        .values("team_id", "team__name")
+        .annotate(total_size=Sum("filters_size"))
+        .order_by("-total_size")[:5]
+    )
+
+    for rank, row in enumerate(top_by_count, start=1):
+        flag_count_gauge.labels(
+            rank=str(rank),
+            team_id=str(row["team_id"]),
+            team_name=row["team__name"] or "Unknown",
+        ).set(row["flag_count"])
+
+    for rank, row in enumerate(top_by_largest, start=1):
+        largest_flag_gauge.labels(
+            rank=str(rank),
+            team_id=str(row["team_id"]),
+            team_name=row["team__name"] or "Unknown",
+        ).set(row["largest_flag_size"] or 0)
+
+    for rank, row in enumerate(top_by_total, start=1):
+        total_size_gauge.labels(
+            rank=str(rank),
+            team_id=str(row["team_id"]),
+            team_name=row["team__name"] or "Unknown",
+        ).set(row["total_size"] or 0)
+
+    logger.info(
+        "Computed feature flag metrics",
+        top_flag_count=top_by_count[0]["flag_count"] if top_by_count else 0,
+        top_largest_flag_bytes=top_by_largest[0]["largest_flag_size"] if top_by_largest else 0,
+        top_total_size_bytes=top_by_total[0]["total_size"] if top_by_total else 0,
+    )
