@@ -1,7 +1,8 @@
 import time
 
 from django.conf import settings
-from django.db.models import Count, F, Func, IntegerField, Max, Sum
+from django.db.models import Count, F, Func, IntegerField, Max, Sum, TextField
+from django.db.models.functions import Cast
 
 import structlog
 from celery import shared_task
@@ -200,9 +201,10 @@ def compute_feature_flag_metrics(self: PushGatewayTask) -> None:
         base_qs.values("team_id", "team__name").annotate(flag_count=Count("id")).order_by("-flag_count", "team_id")[:5]
     )
 
-    # Top 5 by largest individual flag (using pg_column_size for actual byte size)
+    # Top 5 by largest individual flag (using OCTET_LENGTH for JSON text byte size)
+    filters_bytes = Func(Cast(F("filters"), TextField()), function="OCTET_LENGTH", output_field=IntegerField())
     top_by_largest = list(
-        base_qs.annotate(filters_size=Func(F("filters"), function="pg_column_size", output_field=IntegerField()))
+        base_qs.annotate(filters_size=filters_bytes)
         .values("team_id", "team__name")
         .annotate(largest_flag_size=Max("filters_size"))
         .order_by("-largest_flag_size", "team_id")[:5]
@@ -210,7 +212,7 @@ def compute_feature_flag_metrics(self: PushGatewayTask) -> None:
 
     # Top 5 by total flag size
     top_by_total = list(
-        base_qs.annotate(filters_size=Func(F("filters"), function="pg_column_size", output_field=IntegerField()))
+        base_qs.annotate(filters_size=filters_bytes)
         .values("team_id", "team__name")
         .annotate(total_size=Sum("filters_size"))
         .order_by("-total_size", "team_id")[:5]
