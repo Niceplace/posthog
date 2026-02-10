@@ -51,7 +51,7 @@ class TestWorkloadCollector:
         table_type = ast.TableType(table=EventsTable())
         collector.visit(table_type)
 
-        assert len(collector.workloads) == 0
+        assert len(collector.workloads) == 1
         assert collector.get_workload() == Workload.DEFAULT
 
     def test_collector_raises_error_for_multiple_workloads(self):
